@@ -1,0 +1,11 @@
+node_modules/
+release/
+dist/
+.vite/
+*.exe
+*.zip
+*.7z
+*.tar
+*.tar.gz
+.DS_Store
+.env

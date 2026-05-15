@@ -1,0 +1,58 @@
+{
+  "name": "frontend-electron-app",
+  "version": "4.0.1",
+  "description": "React + Electron app",
+  "main": "main.js",
+  "scripts": {
+    "build-react": "cd frontened && npm run build",
+    "build:web": "cd frontened && npm run build",
+    "serve:web": "node web-server.js",
+    "start": "electron .",
+    "dist": "npm run build-react && electron-builder",
+    "pack": "electron-builder --dir",
+    "postinstall": "electron-builder install-app-deps"
+  },
+  "devDependencies": {
+    "electron": "^31.0.0",
+    "electron-builder": "^24.0.0"
+  },
+  "build": {
+    "appId": "com.example.frontendapp",
+    "productName": "FrontendApp",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "main.js",
+      "frontened/dist/**/*",
+      "node_modules/**/*",
+      "package.json",
+      "!**/*.map",
+      "!frontened/src/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "node_modules",
+        "to": "node_modules",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "frontened/dist",
+        "to": "frontened/dist"
+      }
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  },
+  "dependencies": {
+    "express": "^5.1.0"
+  }
+}
