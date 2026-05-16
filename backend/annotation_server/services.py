@@ -60,6 +60,9 @@ def downsample_data(data: list[float], target_points: int = 1500) -> list[float]
 
 def build_visualization_path(profile: DataProfile, file_path: str) -> Path:
     source = Path(file_path)
+    if not source.is_absolute() and source.parts and source.parts[0] in {"data", "mnt", "home", "opt"}:
+        source = Path("/") / source
+
     try:
         source.relative_to(profile.vis_data_root)
         return source.with_suffix(".json")
