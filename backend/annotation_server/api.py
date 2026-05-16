@@ -17,7 +17,7 @@ from .services import (
 )
 from .storage import (
     get_annotation_for_file,
-    list_files_recursive,
+    list_data_files,
     load_annotations,
     write_annotation,
 )
@@ -40,6 +40,7 @@ def create_app(profile_name: str | None = None, profile: DataProfile | None = No
     def health():
         return {
             "status": "ok",
+            "data_source": settings.data_source,
             "raw_data_root": str(settings.raw_data_root),
             "vis_data_root": str(settings.vis_data_root),
             "annotation_file": str(settings.annotation_file),
@@ -54,7 +55,7 @@ def create_app(profile_name: str | None = None, profile: DataProfile | None = No
 
     @app.get("/api/file_tree")
     def get_file_tree():
-        tree = list_files_recursive(settings.raw_data_root, settings, settings.cache_tree_path)
+        tree = list_data_files(settings)
         annotations = load_annotations(settings.annotation_file)
         dropped_datasets = load_dropped_datasets(settings)
 
@@ -110,7 +111,7 @@ def create_app(profile_name: str | None = None, profile: DataProfile | None = No
     @app.get("/api/next_unannotated")
     def get_next_unannotated(user: str = Query(...), current_file: Optional[str] = Query(None)):
         locks.cleanup()
-        tree = list_files_recursive(settings.raw_data_root, settings, settings.cache_tree_path)
+        tree = list_data_files(settings)
         file_path = next_available_file(tree, settings.annotation_file, locks, user, current_file)
         if not file_path:
             raise HTTPException(status_code=404, detail="No available unannotated files found")

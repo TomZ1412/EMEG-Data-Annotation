@@ -61,10 +61,18 @@ def downsample_data(data: list[float], target_points: int = 1500) -> list[float]
 def build_visualization_path(profile: DataProfile, file_path: str) -> Path:
     source = Path(file_path)
     try:
+        source.relative_to(profile.vis_data_root)
+        return source.with_suffix(".json")
+    except ValueError:
+        pass
+
+    try:
         relative = source.relative_to(profile.raw_data_root)
         return profile.vis_data_root / relative.with_suffix(".json")
     except ValueError:
-        return Path(str(file_path).replace(str(profile.raw_data_root), str(profile.vis_data_root))).with_suffix(".json")
+        if str(profile.raw_data_root) in str(source):
+            return Path(str(file_path).replace(str(profile.raw_data_root), str(profile.vis_data_root))).with_suffix(".json")
+        return source.with_suffix(".json")
 
 
 def load_visualization_bundle(

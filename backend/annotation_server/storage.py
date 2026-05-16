@@ -108,7 +108,7 @@ def list_files_recursive(
 
     if is_root_call:
         cache_dir.mkdir(parents=True, exist_ok=True)
-        cache_file = cache_dir / "tree.pkl"
+        cache_file = cache_dir / f"tree_{profile.data_source}.pkl"
         if use_cache and cache_file.exists():
             try:
                 with cache_file.open("rb") as handle:
@@ -150,12 +150,86 @@ def list_files_recursive(
 
     if is_root_call:
         try:
-            with (cache_dir / "tree.pkl").open("wb") as handle:
+            with (cache_dir / f"tree_{profile.data_source}.pkl").open("wb") as handle:
                 pickle.dump(tree, handle)
         except Exception as exc:
             print(f"Save cache failed: {exc}")
 
     return tree
+
+
+def processed_logical_name(file_name: str) -> str | None:
+    stem = Path(file_name).stem
+    if "_wav_" in stem:
+        base, block = stem.rsplit("_wav_", 1)
+        return base if block.isdigit() else None
+    if stem.endswith("_psd"):
+        return stem[:-4]
+    return None
+
+
+def list_processed_files_recursive(
+    root: Path,
+    profile: DataProfile,
+    cache_dir: Path | None = None,
+    use_cache: bool = True,
+    is_root_call: bool = True,
+) -> list[dict]:
+    cache_dir = cache_dir or profile.cache_tree_path
+
+    if is_root_call:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        cache_file = cache_dir / "tree_processed.pkl"
+        if use_cache and cache_file.exists():
+            try:
+                with cache_file.open("rb") as handle:
+                    return pickle.load(handle)
+            except Exception as exc:
+                print(f"Processed cache access failed: {exc}")
+
+    try:
+        items = sorted(root.iterdir())
+    except (FileNotFoundError, PermissionError):
+        return []
+
+    tree = []
+    logical_files: dict[str, Path] = {}
+
+    for item in items:
+        if item.name in profile.skip_exact_dirs:
+            continue
+        if any(token in item.name for token in profile.skip_dirs):
+            continue
+
+        if item.is_dir():
+            children = list_processed_files_recursive(item, profile, cache_dir, use_cache, False)
+            if children:
+                tree.append({"name": item.name, "type": "dir", "children": children})
+        elif item.is_file() and item.suffix.lower() == ".json":
+            logical_name = processed_logical_name(item.name)
+            if logical_name:
+                logical_files.setdefault(logical_name, item.parent / f"{logical_name}.json")
+
+    for name, logical_path in sorted(logical_files.items()):
+        tree.append({"name": name, "type": "file", "path": str(logical_path)})
+
+    if is_root_call:
+        try:
+            with (cache_dir / "tree_processed.pkl").open("wb") as handle:
+                pickle.dump(tree, handle)
+        except Exception as exc:
+            print(f"Save processed cache failed: {exc}")
+
+    return tree
+
+
+def list_data_files(
+    profile: DataProfile,
+    use_cache: bool = True,
+) -> list[dict]:
+    if profile.data_source == "raw":
+        return list_files_recursive(profile.raw_data_root, profile, profile.cache_tree_path, use_cache)
+    return list_processed_files_recursive(profile.vis_data_root, profile, profile.cache_tree_path, use_cache)
 
 
 def load_visualization(file_path: Path, channel_filters: tuple[str, ...]) -> dict:

@@ -21,6 +21,7 @@ class DataProfile:
     skip_dirs: tuple[str, ...] = ("code", "stimuli", "derivatives")
     skip_exact_dirs: tuple[str, ...] = field(default_factory=tuple)
     root_numeric_range: tuple[int, int] | None = None
+    data_source: str = "processed"
 
 
 PROFILES = {
@@ -75,4 +76,5 @@ def load_profile(profile_name: str | None = None) -> DataProfile:
         skip_dirs=base.skip_dirs,
         skip_exact_dirs=base.skip_exact_dirs,
         root_numeric_range=base.root_numeric_range,
+        data_source=os.getenv("ANNO_DATA_SOURCE", base.data_source).strip().lower(),
     )
