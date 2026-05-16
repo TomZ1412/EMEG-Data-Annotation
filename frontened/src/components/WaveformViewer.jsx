@@ -4,6 +4,24 @@ import * as Plotly from "plotly.js-dist-min";
 const BAD_COLOR = "#dc2626";
 const HOVER_COLOR = "#f59e0b";
 const GOOD_COLOR = "#2563eb";
+const CHANNEL_COLORS = [
+  "#1f77b4",
+  "#ff7f0e",
+  "#2ca02c",
+  "#d62728",
+  "#9467bd",
+  "#8c564b",
+  "#e377c2",
+  "#7f7f7f",
+  "#bcbd22",
+  "#17becf",
+  "#4c78a8",
+  "#f58518",
+  "#54a24b",
+  "#b279a2",
+  "#72b7b2",
+  "#eeca3b",
+];
 
 export default function WaveformViewer({
   data,
@@ -19,7 +37,7 @@ export default function WaveformViewer({
   const scrollTopRef = useRef(0);
 
   const [activeView, setActiveView] = useState("psd");
-  const [scalingFactor, setScalingFactor] = useState(1);
+  const [scalingFactor, setScalingFactor] = useState(8000);
   const [hoveredChannel, setHoveredChannel] = useState(null);
 
   const totalSubBlocks = Math.max(1, Number(data?.totalSubBlocks || 1));
@@ -58,16 +76,22 @@ export default function WaveformViewer({
     );
   };
 
-  const markSelectedChannels = (channels) => {
+  const toggleSelectedChannels = (channels) => {
     if (!channels.length || !setBadChannels) return;
-    setBadChannels([...new Set([...badChannels, ...channels])]);
+    const uniqueChannels = [...new Set(channels)];
+    const shouldClear = uniqueChannels.every((channel) => badChannels.includes(channel));
+    if (shouldClear) {
+      setBadChannels(badChannels.filter((channel) => !uniqueChannels.includes(channel)));
+    } else {
+      setBadChannels([...new Set([...badChannels, ...uniqueChannels])]);
+    }
   };
 
-  const channelLine = (channel) => {
+  const channelLine = (channel, index = 0) => {
     const isBad = badChannels.includes(channel);
     const isHovered = hoveredChannel === channel;
     return {
-      color: isBad ? BAD_COLOR : isHovered ? HOVER_COLOR : GOOD_COLOR,
+      color: isBad ? BAD_COLOR : isHovered ? HOVER_COLOR : CHANNEL_COLORS[index % CHANNEL_COLORS.length] || GOOD_COLOR,
       width: isBad || isHovered ? 2.4 : 1,
     };
   };
@@ -97,7 +121,7 @@ export default function WaveformViewer({
       const traces = channels.map((channel, index) => {
         const values = wavData[channel] || [];
         const mean = values.reduce((sum, value) => sum + value, 0) / Math.max(1, values.length);
-        const line = channelLine(channel);
+        const line = channelLine(channel, index);
         return {
           x: time.slice(0, values.length),
           y: values.map((value) => (value - mean) * scalingFactor + (channels.length - index - 1) * offset),
@@ -182,8 +206,8 @@ export default function WaveformViewer({
       container.innerHTML = "";
 
       const channels = Object.keys(psdSeries);
-      const traces = channels.map((channel) => {
-        const line = channelLine(channel);
+      const traces = channels.map((channel, index) => {
+        const line = channelLine(channel, index);
         return {
           x: psdFrequencies,
           y: psdSeries[channel],
@@ -220,7 +244,7 @@ export default function WaveformViewer({
       if (cancelled) return;
       plotDiv.on("plotly_selected", (eventData) => {
         if (!eventData?.points?.length) return;
-        markSelectedChannels([...new Set(eventData.points.map((point) => point.data.name).filter(Boolean))]);
+        toggleSelectedChannels([...new Set(eventData.points.map((point) => point.data.name).filter(Boolean))]);
       });
       plotDiv.on("plotly_click", (event) => toggleChannel(event.points?.[0]?.data?.name));
       plotDiv.on("plotly_hover", (event) => setHoveredChannel(event.points?.[0]?.data?.name || null));
@@ -291,8 +315,8 @@ export default function WaveformViewer({
           <button type="button" onClick={() => setScalingFactor((value) => value * 0.8)} style={buttonStyle("#2563eb")}>
             -
           </button>
-          <button type="button" onClick={autoScale} style={buttonStyle("#16a34a")}>
-            Auto
+          <button type="button" onClick={() => setScalingFactor(8000)} style={buttonStyle("#16a34a")}>
+            8000
           </button>
           <button type="button" onClick={() => setScalingFactor((value) => value * 1.2)} style={buttonStyle("#2563eb")}>
             +
@@ -367,7 +391,7 @@ export default function WaveformViewer({
 function ChannelList({ channels, badChannels, hoveredChannel, onHover, onToggle }) {
   return (
     <div style={styles.channelList}>
-      {channels.map((channel) => {
+      {channels.map((channel, index) => {
         const isBad = badChannels.includes(channel);
         const isHovered = hoveredChannel === channel;
         return (
@@ -378,8 +402,9 @@ function ChannelList({ channels, badChannels, hoveredChannel, onHover, onToggle 
             onMouseLeave={() => onHover(null)}
             onClick={() => onToggle(channel)}
             title={channel}
-            style={channelButtonStyle(isBad, isHovered)}
+            style={channelButtonStyle(isBad, isHovered, index)}
           >
+            <span style={colorDotStyle(index, isBad, isHovered)} />
             {channel}
           </button>
         );
@@ -519,10 +544,12 @@ const iconButtonStyle = {
   lineHeight: 1,
 };
 
-function channelButtonStyle(isBad, isHovered) {
+function channelButtonStyle(isBad, isHovered, index) {
   return {
     width: "100%",
-    display: "block",
+    display: "flex",
+    alignItems: "center",
+    gap: 6,
     textAlign: "left",
     padding: "5px 7px",
     marginBottom: 3,
@@ -530,11 +557,21 @@ function channelButtonStyle(isBad, isHovered) {
     borderColor: isBad ? "#fecaca" : isHovered ? "#fde68a" : "#e5e7eb",
     borderRadius: 4,
     background: isBad ? "#fef2f2" : isHovered ? "#fffbeb" : "#fff",
-    color: isBad ? BAD_COLOR : "#111827",
+    color: isBad ? BAD_COLOR : CHANNEL_COLORS[index % CHANNEL_COLORS.length] || "#111827",
     cursor: "pointer",
     fontSize: 12,
     overflow: "hidden",
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
+  };
+}
+
+function colorDotStyle(index, isBad, isHovered) {
+  return {
+    flex: "0 0 auto",
+    width: isHovered ? 10 : 8,
+    height: isHovered ? 10 : 8,
+    borderRadius: "50%",
+    background: isBad ? BAD_COLOR : CHANNEL_COLORS[index % CHANNEL_COLORS.length] || GOOD_COLOR,
   };
 }
