@@ -30,11 +30,13 @@ export default function WaveformViewer({
   loading,
   onSelectSubBlock,
   currentSubBlockIndex = 0,
+  markedSubBlocks = [],
 }) {
   const waveformRef = useRef(null);
   const psdRef = useRef(null);
   const activePlotRef = useRef(null);
   const scrollTopRef = useRef(0);
+  const badChannelsRef = useRef(badChannels);
 
   const [activeView, setActiveView] = useState("psd");
   const [scalingFactor, setScalingFactor] = useState(8000);
@@ -45,6 +47,10 @@ export default function WaveformViewer({
   const psdData = data?.psd || null;
   const psdSeries = psdData?.psd || {};
   const psdFrequencies = psdData?.frequencies || [];
+
+  useEffect(() => {
+    badChannelsRef.current = badChannels;
+  }, [badChannels]);
 
   const channelNames = useMemo(() => {
     if (Object.keys(wavData).length) return Object.keys(wavData);
@@ -69,29 +75,112 @@ export default function WaveformViewer({
 
   const toggleChannel = (channel) => {
     if (!channel || !setBadChannels) return;
+    const currentBadChannels = badChannelsRef.current;
     setBadChannels(
-      badChannels.includes(channel)
-        ? badChannels.filter((item) => item !== channel)
-        : [...badChannels, channel]
+      currentBadChannels.includes(channel)
+        ? currentBadChannels.filter((item) => item !== channel)
+        : [...currentBadChannels, channel]
     );
   };
 
   const toggleSelectedChannels = (channels) => {
     if (!channels.length || !setBadChannels) return;
+    const currentBadChannels = badChannelsRef.current;
     const uniqueChannels = [...new Set(channels)];
-    const shouldClear = uniqueChannels.every((channel) => badChannels.includes(channel));
+    const shouldClear = uniqueChannels.every((channel) => currentBadChannels.includes(channel));
     if (shouldClear) {
-      setBadChannels(badChannels.filter((channel) => !uniqueChannels.includes(channel)));
+      setBadChannels(currentBadChannels.filter((channel) => !uniqueChannels.includes(channel)));
     } else {
-      setBadChannels([...new Set([...badChannels, ...uniqueChannels])]);
+      setBadChannels([...new Set([...currentBadChannels, ...uniqueChannels])]);
     }
   };
 
-  const channelLine = (channel, index = 0) => {
+  const channelMatchesBox = (values, xRange, yRange) => {
+    const [xMin, xMax] = [Math.min(...xRange), Math.max(...xRange)];
+    const [yMin, yMax] = [Math.min(...yRange), Math.max(...yRange)];
+
+    return values.some((value, index) => {
+      const x = psdFrequencies[index];
+      if (x < xMin || x > xMax) return false;
+
+      const yCandidates = [value];
+      if (value > 0) yCandidates.push(Math.log10(value));
+      return yCandidates.some((y) => y >= yMin && y <= yMax);
+    });
+  };
+
+  const pointInPolygon = (x, y, polygonX, polygonY) => {
+    let inside = false;
+    for (let i = 0, j = polygonX.length - 1; i < polygonX.length; j = i++) {
+      const xi = polygonX[i];
+      const yi = polygonY[i];
+      const xj = polygonX[j];
+      const yj = polygonY[j];
+      const intersects = yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi || Number.EPSILON) + xi;
+      if (intersects) inside = !inside;
+    }
+    return inside;
+  };
+
+  const channelMatchesLasso = (values, polygonX, polygonY) =>
+    values.some((value, index) => {
+      const x = psdFrequencies[index];
+      if (value > 0 && pointInPolygon(x, Math.log10(value), polygonX, polygonY)) return true;
+      return pointInPolygon(x, value, polygonX, polygonY);
+    });
+
+  const channelsFromSelection = (eventData) => {
+    const channels = Object.keys(psdSeries);
+    if (eventData?.range?.x && eventData?.range?.y) {
+      return channels.filter((channel) => channelMatchesBox(psdSeries[channel] || [], eventData.range.x, eventData.range.y));
+    }
+
+    if (eventData?.lassoPoints?.x?.length && eventData?.lassoPoints?.y?.length) {
+      return channels.filter((channel) =>
+        channelMatchesLasso(psdSeries[channel] || [], eventData.lassoPoints.x, eventData.lassoPoints.y)
+      );
+    }
+
+    return [];
+  };
+
+  const psdTraceStyle = (channels) => {
+    const currentBadChannels = badChannelsRef.current;
+    return {
+      colors: channels.map((channel, index) =>
+        currentBadChannels.includes(channel)
+          ? BAD_COLOR
+          : hoveredChannel === channel
+            ? HOVER_COLOR
+            : CHANNEL_COLORS[index % CHANNEL_COLORS.length] || GOOD_COLOR
+      ),
+      widths: channels.map((channel) => (currentBadChannels.includes(channel) || hoveredChannel === channel ? 2.4 : 1)),
+      opacities: channels.map((channel) => (currentBadChannels.includes(channel) || hoveredChannel === channel ? 1 : 0.58)),
+    };
+  };
+
+  const wavTraceStyle = (channels) => {
+    const currentBadChannels = badChannelsRef.current;
+    return {
+      colors: channels.map((channel) =>
+        currentBadChannels.includes(channel) ? BAD_COLOR : hoveredChannel === channel ? HOVER_COLOR : GOOD_COLOR
+      ),
+      widths: channels.map((channel) => (currentBadChannels.includes(channel) || hoveredChannel === channel ? 2.4 : 1)),
+      opacities: channels.map((channel) => (currentBadChannels.includes(channel) || hoveredChannel === channel ? 1 : 0.88)),
+    };
+  };
+
+  const channelLine = (channel, index = 0, colorful = false) => {
     const isBad = badChannels.includes(channel);
     const isHovered = hoveredChannel === channel;
     return {
-      color: isBad ? BAD_COLOR : isHovered ? HOVER_COLOR : CHANNEL_COLORS[index % CHANNEL_COLORS.length] || GOOD_COLOR,
+      color: isBad
+        ? BAD_COLOR
+        : isHovered
+          ? HOVER_COLOR
+          : colorful
+            ? CHANNEL_COLORS[index % CHANNEL_COLORS.length] || GOOD_COLOR
+            : GOOD_COLOR,
       width: isBad || isHovered ? 2.4 : 1,
     };
   };
@@ -121,7 +210,7 @@ export default function WaveformViewer({
       const traces = channels.map((channel, index) => {
         const values = wavData[channel] || [];
         const mean = values.reduce((sum, value) => sum + value, 0) / Math.max(1, values.length);
-        const line = channelLine(channel, index);
+        const line = channelLine(channel, index, false);
         return {
           x: time.slice(0, values.length),
           y: values.map((value) => (value - mean) * scalingFactor + (channels.length - index - 1) * offset),
@@ -129,7 +218,7 @@ export default function WaveformViewer({
           mode: "lines",
           line,
           hoverinfo: "x+y+name",
-          opacity: badChannels.includes(channel) || hoveredChannel === channel ? 1 : 0.88,
+          opacity: badChannels.includes(channel) ? 1 : 0.88,
         };
       });
 
@@ -142,7 +231,7 @@ export default function WaveformViewer({
         showarrow: false,
         font: {
           size: 10,
-          color: badChannels.includes(channel) ? BAD_COLOR : hoveredChannel === channel ? HOVER_COLOR : "#111827",
+          color: badChannels.includes(channel) ? BAD_COLOR : "#111827",
         },
         xanchor: "right",
         align: "right",
@@ -189,7 +278,18 @@ export default function WaveformViewer({
     return () => {
       cancelled = true;
     };
-  }, [activeView, wavData, badChannels, hoveredChannel, scalingFactor]);
+  }, [activeView, wavData, badChannels, scalingFactor]);
+
+  useEffect(() => {
+    if (activeView !== "wav" || !activePlotRef.current || !Object.keys(wavData).length) return;
+    const channels = Object.keys(wavData);
+    const style = wavTraceStyle(channels);
+    Plotly.restyle(activePlotRef.current, {
+      "line.color": style.colors,
+      "line.width": style.widths,
+      opacity: style.opacities,
+    });
+  }, [activeView, wavData, badChannels, hoveredChannel]);
 
   useEffect(() => {
     if (activeView !== "psd") return;
@@ -206,15 +306,15 @@ export default function WaveformViewer({
       container.innerHTML = "";
 
       const channels = Object.keys(psdSeries);
+      const style = psdTraceStyle(channels);
       const traces = channels.map((channel, index) => {
-        const line = channelLine(channel, index);
         return {
           x: psdFrequencies,
           y: psdSeries[channel],
           name: channel,
           mode: "lines",
-          line,
-          opacity: badChannels.includes(channel) || hoveredChannel === channel ? 1 : 0.58,
+          line: { color: style.colors[index], width: style.widths[index] },
+          opacity: style.opacities[index],
         };
       });
 
@@ -230,6 +330,7 @@ export default function WaveformViewer({
         {
           dragmode: "select",
           hovermode: "closest",
+          selectdirection: "any",
           margin: { l: 58, r: 16, t: 16, b: 46 },
           xaxis: { title: "Frequency (Hz)", showgrid: true, gridcolor: "#eef2f7", fixedrange: false },
           yaxis: { title: "PSD", type: "log", showgrid: true, gridcolor: "#eef2f7", fixedrange: false },
@@ -238,13 +339,21 @@ export default function WaveformViewer({
           showlegend: false,
           autosize: true,
         },
-        { displayModeBar: true, scrollZoom: true, responsive: true }
+        {
+          displayModeBar: true,
+          displaylogo: false,
+          scrollZoom: true,
+          responsive: true,
+          modeBarButtonsToAdd: ["select2d", "lasso2d"],
+        }
       );
 
       if (cancelled) return;
       plotDiv.on("plotly_selected", (eventData) => {
-        if (!eventData?.points?.length) return;
-        toggleSelectedChannels([...new Set(eventData.points.map((point) => point.data.name).filter(Boolean))]);
+        const selectedChannels = channelsFromSelection(eventData);
+        if (!selectedChannels.length) return;
+        toggleSelectedChannels(selectedChannels);
+        Plotly.relayout(plotDiv, { selections: [] });
       });
       plotDiv.on("plotly_click", (event) => toggleChannel(event.points?.[0]?.data?.name));
       plotDiv.on("plotly_hover", (event) => setHoveredChannel(event.points?.[0]?.data?.name || null));
@@ -255,7 +364,18 @@ export default function WaveformViewer({
     return () => {
       cancelled = true;
     };
-  }, [activeView, psdFrequencies, psdSeries, badChannels, hoveredChannel]);
+  }, [activeView, psdFrequencies, psdSeries]);
+
+  useEffect(() => {
+    if (activeView !== "psd" || !activePlotRef.current || !Object.keys(psdSeries).length) return;
+    const channels = Object.keys(psdSeries);
+    const style = psdTraceStyle(channels);
+    Plotly.restyle(activePlotRef.current, {
+      "line.color": style.colors,
+      "line.width": style.widths,
+      opacity: style.opacities,
+    });
+  }, [activeView, psdSeries, badChannels, hoveredChannel]);
 
   const setAllChannels = () => {
     if (channelNames.length && setBadChannels) setBadChannels(channelNames);
@@ -322,6 +442,14 @@ export default function WaveformViewer({
             +
           </button>
         </div>
+      )}
+
+      {activeView === "wav" && (
+        <MarkedSubBlockBar
+          blocks={markedSubBlocks}
+          currentSubBlockIndex={currentSubBlockIndex}
+          onSelectSubBlock={onSelectSubBlock}
+        />
       )}
 
       <div style={styles.plotFrame}>
@@ -413,6 +541,39 @@ function ChannelList({ channels, badChannels, hoveredChannel, onHover, onToggle 
   );
 }
 
+function MarkedSubBlockBar({ blocks, currentSubBlockIndex, onSelectSubBlock }) {
+  if (!blocks.length) {
+    return (
+      <div style={styles.markedBar}>
+        <span style={styles.markedLabel}>Marked sub-blocks</span>
+        <span style={styles.markedEmpty}>None</span>
+      </div>
+    );
+  }
+
+  return (
+    <div style={styles.markedBar}>
+      <span style={styles.markedLabel}>Marked sub-blocks</span>
+      <div style={styles.markedScroller}>
+        {blocks.map((index) => {
+          const active = index === currentSubBlockIndex;
+          return (
+            <button
+              key={index}
+              type="button"
+              onClick={() => onSelectSubBlock?.(index)}
+              style={markedButtonStyle(active)}
+              title={`Go to sub-block ${index + 1}`}
+            >
+              {index + 1}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function EmptyState({ text }) {
   return <div style={styles.emptyState}>{text}</div>;
 }
@@ -455,6 +616,33 @@ const styles = {
     border: "1px solid #e5e7eb",
     background: "#f8fafc",
     fontSize: 13,
+  },
+  markedBar: {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    minHeight: 34,
+    padding: "6px 10px",
+    border: "1px solid #fee2e2",
+    background: "#fff7ed",
+    fontSize: 13,
+    overflow: "hidden",
+  },
+  markedLabel: {
+    flex: "0 0 auto",
+    color: "#9a3412",
+    fontWeight: 700,
+  },
+  markedEmpty: {
+    color: "#78716c",
+  },
+  markedScroller: {
+    flex: "1 1 auto",
+    minWidth: 0,
+    display: "flex",
+    gap: 5,
+    overflowX: "auto",
+    paddingBottom: 1,
   },
   plotFrame: {
     flex: 1,
@@ -563,6 +751,22 @@ function channelButtonStyle(isBad, isHovered, index) {
     overflow: "hidden",
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
+  };
+}
+
+function markedButtonStyle(active) {
+  return {
+    flex: "0 0 auto",
+    minWidth: 30,
+    height: 24,
+    padding: "0 8px",
+    borderRadius: 4,
+    border: active ? "1px solid #dc2626" : "1px solid #fdba74",
+    background: active ? "#dc2626" : "#ffffff",
+    color: active ? "#ffffff" : "#c2410c",
+    cursor: "pointer",
+    fontWeight: 700,
+    fontSize: 12,
   };
 }
 

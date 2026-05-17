@@ -126,11 +126,11 @@ function App() {
     });
   }, [subBlockIndex]);
 
-  const fetchFileTree = async () => {
+  const fetchFileTree = async (refresh = false) => {
     if (!currentUser) return;
     setLoadingTree(true);
     try {
-      const res = await axios.get(apiUrl("/file_tree"));
+      const res = await axios.get(apiUrl("/file_tree"), { params: refresh ? { refresh: true } : {} });
       setFileTree(res.data);
       setError(null);
     } catch (err) {
@@ -328,7 +328,7 @@ function App() {
     }
   };
 
-  const handleDatasetMark = async (datasetPath, discarded) => {
+  const handleDatasetMark = async (datasetPath, action) => {
     if (!currentUser) {
       alert("请先设置用户名。");
       return;
@@ -336,13 +336,12 @@ function App() {
 
     setLoadingTree(true);
     try {
-      await axios.post(apiUrl("/mark_dataset"), {
-        dataset_path: datasetPath,
-        discarded,
-        user: currentUser,
+      await axios.post(apiUrl("/datasets/mark"), {
+        path: datasetPath,
+        action,
       });
       await fetchFileTree();
-      alert(discarded ? "数据集已标记为弃用。" : "已取消数据集弃用标记。");
+      alert(action === "discard" ? "数据集已标记为弃用。" : "已取消数据集弃用标记。");
     } catch (err) {
       console.error("标记数据集失败", err);
       alert("标记数据集失败，请重试。");
@@ -370,7 +369,7 @@ function App() {
           </div>
         </div>
         <div style={styles.headerActions}>
-          <button style={styles.secondaryButton} onClick={fetchFileTree} disabled={loadingTree}>
+          <button style={styles.secondaryButton} onClick={() => fetchFileTree(true)} disabled={loadingTree}>
             刷新文件
           </button>
           <button
@@ -411,6 +410,7 @@ function App() {
                   loading={loadingData}
                   onSelectSubBlock={setSubBlockIndex}
                   currentSubBlockIndex={subBlockIndex}
+                  markedSubBlocks={getSubBlocksWithBadChannels()}
                 />
               </section>
 

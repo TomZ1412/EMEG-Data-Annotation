@@ -54,8 +54,8 @@ def create_app(profile_name: str | None = None, profile: DataProfile | None = No
         return FileResponse(path)
 
     @app.get("/api/file_tree")
-    def get_file_tree():
-        tree = list_data_files(settings)
+    def get_file_tree(refresh: bool = Query(False)):
+        tree = list_data_files(settings, use_cache=not refresh)
         annotations = load_annotations(settings.annotation_file)
         dropped_datasets = load_dropped_datasets(settings)
 

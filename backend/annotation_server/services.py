@@ -4,7 +4,7 @@ import time
 from pathlib import Path
 
 from .config import DataProfile
-from .storage import load_annotations, load_visualization, read_json, write_json
+from .storage import load_annotations, load_visualization, read_json, resolve_visualization_file, write_json
 
 
 class AnnotationLocks:
@@ -89,11 +89,11 @@ def load_visualization_bundle(
     base_name = vis_file.stem
     total_sub_blocks = 0
     if vis_file.parent.exists():
-        total_sub_blocks = sum(
-            1
-            for item in vis_file.parent.glob(f"{base_name}*.json")
-            if "_wav" in item.name
-        )
+        total_sub_blocks = len({
+            item.stem
+            for item in vis_file.parent.glob(f"{base_name}_wav_*.*")
+            if item.suffix.lower() in {".json", ".npz"}
+        })
 
     wav_file = Path(str(vis_file).replace(".json", f"_wav_{sub_block}.json").replace("\\", "/"))
     psd_file = Path(str(vis_file).replace(".json", "_psd.json").replace("\\", "/"))
@@ -110,7 +110,7 @@ def load_visualization_bundle(
         result["wav"] = channels
 
     result["scaling_factor"] = wav_data.get("scaling_factor", 8000) if wav_data else 8000
-    result["psd"] = load_visualization(psd_file, profile.channel_filters) if psd_file.exists() else {}
+    result["psd"] = load_visualization(psd_file, profile.channel_filters) if resolve_visualization_file(psd_file) else {}
     return result
 
 

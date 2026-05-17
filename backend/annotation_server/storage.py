@@ -6,7 +6,12 @@ import pickle
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 from .config import DataProfile
+
+
+PROCESSED_SUFFIXES = {".json", ".npz"}
 
 
 def read_json(path: Path, default: Any) -> Any:
@@ -205,7 +210,7 @@ def list_processed_files_recursive(
             children = list_processed_files_recursive(item, profile, cache_dir, use_cache, False)
             if children:
                 tree.append({"name": item.name, "type": "dir", "children": children})
-        elif item.is_file() and item.suffix.lower() == ".json":
+        elif item.is_file() and item.suffix.lower() in PROCESSED_SUFFIXES:
             logical_name = processed_logical_name(item.name)
             if logical_name:
                 logical_files.setdefault(logical_name, item.parent / f"{logical_name}.json")
@@ -232,27 +237,91 @@ def list_data_files(
     return list_processed_files_recursive(profile.vis_data_root, profile, profile.cache_tree_path, use_cache)
 
 
-def load_visualization(file_path: Path, channel_filters: tuple[str, ...]) -> dict:
-    if not file_path.exists():
-        return {}
+def resolve_visualization_file(file_path: Path) -> Path | None:
+    candidates = [file_path]
+    if file_path.suffix.lower() == ".json":
+        candidates.insert(0, file_path.with_suffix(".npz"))
+    elif file_path.suffix.lower() == ".npz":
+        candidates.append(file_path.with_suffix(".json"))
+
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def keep_channel(name: str, channel_filters: tuple[str, ...]) -> bool:
+    return all(token.lower() not in name.lower() for token in channel_filters)
+
+
+def scalar_value(value: np.ndarray | Any) -> Any:
+    return value.item() if hasattr(value, "shape") and value.shape == () else value
+
+
+def load_npz_visualization(file_path: Path, channel_filters: tuple[str, ...]) -> dict:
+    try:
+        with np.load(file_path, allow_pickle=False) as data:
+            files = set(data.files)
+            channels = [str(name) for name in data["channels"].tolist()] if "channels" in files else []
+
+            if "data" in files:
+                values = np.asarray(data["data"], dtype=np.float32)
+                return {
+                    "segment_index": int(scalar_value(data["segment_index"])) if "segment_index" in files else 0,
+                    "total_segments": int(scalar_value(data["total_segments"])) if "total_segments" in files else 1,
+                    "start_time": float(scalar_value(data["start_time"])) if "start_time" in files else 0.0,
+                    "end_time": float(scalar_value(data["end_time"])) if "end_time" in files else 0.0,
+                    "duration": float(scalar_value(data["duration"])) if "duration" in files else 0.0,
+                    "scaling_factor": float(scalar_value(data["scaling_factor"])) if "scaling_factor" in files else 8000,
+                    "channels": {
+                        channel: values[index].tolist()
+                        for index, channel in enumerate(channels)
+                        if index < values.shape[0] and keep_channel(channel, channel_filters)
+                    },
+                }
+
+            if "psd" in files:
+                values = np.asarray(data["psd"], dtype=np.float32)
+                frequencies = np.asarray(data["frequencies"], dtype=np.float32) if "frequencies" in files else np.array([], dtype=np.float32)
+                return {
+                    "frequencies": frequencies.tolist(),
+                    "psd": {
+                        channel: values[index].tolist()
+                        for index, channel in enumerate(channels)
+                        if index < values.shape[0] and keep_channel(channel, channel_filters)
+                    },
+                }
+    except Exception as exc:
+        print(f"Failed to load NPZ visualization {file_path}: {exc}")
+
+    return {}
+
+
+def load_json_visualization(file_path: Path, channel_filters: tuple[str, ...]) -> dict:
     try:
         data = json.loads(file_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         print(f"Failed to load visualization {file_path}: {exc}")
         return {}
 
-    def keep_channel(name: str) -> bool:
-        return all(token.lower() not in name.lower() for token in channel_filters)
-
     channels = data.get("channels")
     data["channels"] = {
-        name: values for name, values in channels.items() if keep_channel(name)
+        name: values for name, values in channels.items() if keep_channel(name, channel_filters)
     } if isinstance(channels, dict) else {}
 
     psd = data.get("psd")
     if isinstance(psd, dict):
         data["psd"] = {
-            name: values for name, values in psd.items() if keep_channel(name)
+            name: values for name, values in psd.items() if keep_channel(name, channel_filters)
         }
 
     return data
+
+
+def load_visualization(file_path: Path, channel_filters: tuple[str, ...]) -> dict:
+    resolved = resolve_visualization_file(file_path)
+    if resolved is None:
+        return {}
+    if resolved.suffix.lower() == ".npz":
+        return load_npz_visualization(resolved, channel_filters)
+    return load_json_visualization(resolved, channel_filters)
