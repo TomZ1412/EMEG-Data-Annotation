@@ -5,6 +5,7 @@ import argparse
 import torch
 import random
 import numpy as np
+from collections import defaultdict
 # from factory.utils import (
 #     process,
 #     split_pretrain_metadata,
@@ -49,8 +50,118 @@ def parse_arg():
     parser.add_argument("--time", type=int, default=30, help="the length of each segment")
     parser.add_argument("--stride", type=int, default=30, help="stride when segmenting")
     parser.add_argument("--max_workers", type=int, default=64)
+    parser.add_argument("--selection-config", default=None, help="JSON file with per-dataset selection rules.")
+    parser.add_argument("--max-files", type=int, default=None, help="Global maximum number of files after selection.")
     args = parser.parse_args()
     return args
+
+
+def normalize_filter(values):
+    if values is None:
+        return None
+    if isinstance(values, str):
+        values = [item.strip() for item in values.split(",")]
+    normalized = {str(item).strip() for item in values if str(item).strip()}
+    return normalized or None
+
+
+def path_parts(record):
+    dataset = record.get("dataset", "")
+    path = record.get("path", "")
+    if f"/{dataset}/" in path:
+        relative = path.split(f"/{dataset}/", 1)[1]
+    else:
+        relative = path
+    return [part for part in relative.replace("\\", "/").split("/") if part]
+
+
+def get_subject(record):
+    for part in path_parts(record):
+        if part.startswith("sub-"):
+            return part
+    return "__unknown_subject__"
+
+
+def get_session(record):
+    for part in path_parts(record):
+        if part.startswith("ses-"):
+            return part
+    return None
+
+
+def record_allowed_by_rule(record, rule):
+    subject = get_subject(record)
+    session = get_session(record)
+    subjects = normalize_filter(rule.get("subjects"))
+    exclude_subjects = normalize_filter(rule.get("exclude_subjects"))
+    sessions = normalize_filter(rule.get("sessions") or rule.get("include_sessions"))
+    exclude_sessions = normalize_filter(rule.get("exclude_sessions"))
+
+    if subjects and subject not in subjects:
+        return False
+    if exclude_subjects and subject in exclude_subjects:
+        return False
+    if sessions and session not in sessions:
+        return False
+    if exclude_sessions and session in exclude_sessions:
+        return False
+    return True
+
+
+def select_records_for_dataset(records, rule):
+    max_subjects = rule.get("max_subjects")
+    max_files = rule.get("max_files")
+    max_files_per_subject = rule.get("max_files_per_subject")
+    selected = []
+    subjects_seen = set()
+    files_per_subject = defaultdict(int)
+
+    for record in sorted(records, key=lambda item: item["path"]):
+        if not record_allowed_by_rule(record, rule):
+            continue
+
+        subject = get_subject(record)
+        if max_subjects is not None and subject not in subjects_seen and len(subjects_seen) >= int(max_subjects):
+            continue
+        if max_files_per_subject is not None and files_per_subject[subject] >= int(max_files_per_subject):
+            continue
+
+        selected.append(record)
+        subjects_seen.add(subject)
+        files_per_subject[subject] += 1
+
+        if max_files is not None and len(selected) >= int(max_files):
+            break
+
+    return selected
+
+
+def apply_selection_config(brain_files, config_path, logger):
+    if not config_path:
+        return brain_files
+
+    with open(config_path, "r", encoding="utf-8") as f:
+        config = json.load(f)
+
+    dataset_rules = config.get("datasets", {})
+    if not isinstance(dataset_rules, dict) or not dataset_rules:
+        raise ValueError("selection config must contain a non-empty 'datasets' object")
+
+    records_by_dataset = defaultdict(list)
+    for record in brain_files:
+        records_by_dataset[record.get("dataset")].append(record)
+
+    selected = []
+    for dataset, rule in dataset_rules.items():
+        dataset_records = records_by_dataset.get(dataset, [])
+        dataset_selected = select_records_for_dataset(dataset_records, rule or {})
+        logger.info(f"selection {dataset}: {len(dataset_selected)} / {len(dataset_records)} files")
+        selected.extend(dataset_selected)
+
+    if config.get("max_files") is not None:
+        selected = selected[: int(config["max_files"])]
+
+    return selected
 
 import json
 ROOT = '/mnt/petrelfs/xiaoqinfan/ZZH/data/BrainDataBase/pretrain/EEG/'
@@ -200,6 +311,9 @@ if __name__ == "__main__":
     logger.info("searching_brain_files...")
     brain_files = accessor.search_brain_files(root_path=RAW_PATH)
     brain_files = [file for file in brain_files if file['dataset']!='processed']
+    brain_files = apply_selection_config(brain_files, args.selection_config, logger)
+    if args.max_files is not None:
+        brain_files = brain_files[: args.max_files]
     # import pdb;pdb.set_trace()
     # _brain_files = [file for file in brain_files if file['dataset'][4:8] in ['5505','5506','5507','5508','5509','5510','5511','5512']]
     # brain_files = _brain_files

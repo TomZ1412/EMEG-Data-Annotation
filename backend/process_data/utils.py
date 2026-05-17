@@ -19,6 +19,8 @@ from brain_constant import (
 from accessor import DataAccessor, write_torch_warpper
 from typing import List
 
+DEFAULT_VIS_SCALING_FACTOR = 8000
+
 # def filter_channel(raw, dataset: str):
 #     exclude = []
 #     if dataset in EXCLUDE_DICT.keys():
@@ -374,15 +376,14 @@ def split_to_segments_save(
     # psd_path = os.path.join(
     #             brain_file_folder_path, f"psd.json"
     #         )
-    psd_path = brain_file_folder_path + "_psd.json"
-    psd_data = {
-                "frequencies": psd_freqs,
-                "psd": {}
-            }
-    for i, ch_name in enumerate(psd_ch_names):
-        psd_data["psd"][ch_name] = psd[i].tolist()
-    with open(psd_path, "w") as f:
-        json.dump(psd_data, f)
+    psd_path = brain_file_folder_path + "_psd.npz"
+    np.savez_compressed(
+        psd_path,
+        kind=np.array("psd"),
+        frequencies=np.asarray(psd_freqs, dtype=np.float32),
+        psd=np.asarray(psd, dtype=np.float32),
+        channels=np.asarray(psd_ch_names),
+    )
     # while end < data.shape[1]:
     while start < data.shape[1]:
         # seg_data, _ = sensortype_wise_normalize(
@@ -403,20 +404,20 @@ def split_to_segments_save(
             # seg_data_path = os.path.join(
             #     brain_file_folder_path, f"wav_{len(segments_metadata)}.json"
             # )
-            seg_data_path = brain_file_folder_path + f"_wav_{len(segments_metadata)}.json"
-            waveform = {
-                        "segment_index": len(segments_metadata),
-                        "total_segments": n_segments,
-                        "start_time": start / sfreq,
-                        "end_time": end / sfreq,
-                        "duration": (end - start) / sfreq,
-                        "scaling_factor": scale_factor,
-                        "channels": {}
-                    }
-            for i, ch_name in enumerate(wav_ch_names):
-                waveform["channels"][ch_name] = seg_data[i].tolist()
-            with open(seg_data_path, "w") as f:
-                json.dump(waveform, f)
+            seg_data_path = brain_file_folder_path + f"_wav_{len(segments_metadata)}.npz"
+            np.savez_compressed(
+                seg_data_path,
+                kind=np.array("wav"),
+                data=np.asarray(seg_data, dtype=np.float32),
+                channels=np.asarray(wav_ch_names),
+                segment_index=np.int32(len(segments_metadata)),
+                total_segments=np.int32(n_segments),
+                start_time=np.float32(start / sfreq),
+                end_time=np.float32(end / sfreq),
+                duration=np.float32((end - start) / sfreq),
+                sfreq=np.float32(sfreq),
+                scaling_factor=np.float32(scale_factor if scale_factor > 0 else DEFAULT_VIS_SCALING_FACTOR),
+            )
             # import pdb;pdb.set_trace()
             time.sleep(0.01)
             metadata = {
