@@ -1,0 +1,17 @@
+{
+  "datasets": {
+    "datasetA": {
+      "max_subjects": 10,
+      "max_files_per_subject": 20
+    },
+    "datasetB": {
+      "subjects": ["sub-01"],
+      "max_files_per_subject": null
+    },
+    "datasetC": {
+      "subjects": ["sub-01", "sub-02"],
+      "sessions": ["ses-01"],
+      "max_files": 30
+    }
+  }
+}
