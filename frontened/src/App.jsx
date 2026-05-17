@@ -88,7 +88,10 @@ function App() {
       setError(null);
 
       const started = await startAnnotation(selectedFile);
-      if (cancelled) return;
+      if (cancelled) {
+        setLoadingData(false);
+        return;
+      }
 
       if (!started) {
         setSelectedFile(null);
@@ -107,7 +110,11 @@ function App() {
         await fetchAnnotationData(selectedFile);
       }
 
-      if (!cancelled) fetchVisualizationData(selectedFile, subBlockIndex);
+      if (!cancelled) {
+        fetchVisualizationData(selectedFile, subBlockIndex);
+      } else {
+        setLoadingData(false);
+      }
     };
 
     openFile();
@@ -191,6 +198,7 @@ function App() {
     if (!force && visualizationCacheRef.current.has(cacheKey)) {
       setVisData(visualizationCacheRef.current.get(cacheKey));
       setError(null);
+      setLoadingData(false);
       return;
     }
 

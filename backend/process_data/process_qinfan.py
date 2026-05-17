@@ -112,26 +112,42 @@ def select_records_for_dataset(records, rule):
     max_subjects = rule.get("max_subjects")
     max_files = rule.get("max_files")
     max_files_per_subject = rule.get("max_files_per_subject")
-    selected = []
-    subjects_seen = set()
-    files_per_subject = defaultdict(int)
+    subject_order = []
+    records_by_subject = defaultdict(list)
 
     for record in sorted(records, key=lambda item: item["path"]):
         if not record_allowed_by_rule(record, rule):
             continue
 
         subject = get_subject(record)
-        if max_subjects is not None and subject not in subjects_seen and len(subjects_seen) >= int(max_subjects):
-            continue
-        if max_files_per_subject is not None and files_per_subject[subject] >= int(max_files_per_subject):
-            continue
+        if subject not in records_by_subject:
+            subject_order.append(subject)
+        records_by_subject[subject].append(record)
 
-        selected.append(record)
-        subjects_seen.add(subject)
-        files_per_subject[subject] += 1
+    if max_subjects is not None:
+        subject_order = subject_order[: int(max_subjects)]
 
-        if max_files is not None and len(selected) >= int(max_files):
-            break
+    per_subject_limit = int(max_files_per_subject) if max_files_per_subject is not None else None
+    subject_queues = {
+        subject: records_by_subject[subject][:per_subject_limit]
+        for subject in subject_order
+    }
+
+    selected = []
+    cursor = 0
+    while subject_queues:
+        subject = subject_order[cursor % len(subject_order)]
+        queue = subject_queues.get(subject, [])
+        if queue:
+            selected.append(queue.pop(0))
+            if max_files is not None and len(selected) >= int(max_files):
+                break
+        if not queue:
+            subject_queues.pop(subject, None)
+            subject_order = [item for item in subject_order if item in subject_queues]
+            cursor = 0
+        elif subject_order:
+            cursor += 1
 
     return selected
 
