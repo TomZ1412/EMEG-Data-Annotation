@@ -1,9 +1,34 @@
 import React, { memo, useMemo, useState } from "react";
 
-const FILTERS = {
-  all: "全部",
-  annotated: "已标注",
-  unannotated: "未标注",
+const TEXT = {
+  en: {
+    filters: {
+      all: "All",
+      annotated: "Annotated",
+      unannotated: "Unannotated",
+    },
+    annotated: "Annotated",
+    unannotated: "Unannotated",
+    busyBy: (user) => `Being annotated by ${user || "another user"}`,
+    fileFilter: "File filter",
+    total: "Total",
+    busy: "Busy",
+    noMatchingFiles: "No matching files",
+  },
+  zh: {
+    filters: {
+      all: "全部",
+      annotated: "已标注",
+      unannotated: "未标注",
+    },
+    annotated: "已标注",
+    unannotated: "未标注",
+    busyBy: (user) => `正在被 ${user || "其他用户"} 标注`,
+    fileFilter: "文件筛选",
+    total: "总计",
+    busy: "占用",
+    noMatchingFiles: "暂无匹配文件",
+  },
 };
 
 function fileVisible(node, filter) {
@@ -24,7 +49,7 @@ function filterTree(nodes, filter) {
 }
 
 function countFiles(nodes) {
-  const counts = { total: 0, annotated: 0, unannotated: 0, active: 0, discarded: 0 };
+  const counts = { total: 0, annotated: 0, unannotated: 0, active: 0 };
 
   const walk = (items) => {
     items.forEach((node) => {
@@ -34,7 +59,6 @@ function countFiles(nodes) {
         else counts.unannotated += 1;
         if (node.is_active) counts.active += 1;
       } else {
-        if (node.is_discarded) counts.discarded += 1;
         walk(node.children || []);
       }
     });
@@ -44,29 +68,15 @@ function countFiles(nodes) {
   return counts;
 }
 
-const Node = memo(function Node({ node, onSelect, currentUser, isTopLevel = false, onDatasetMark }) {
+const Node = memo(function Node({ node, onSelect, currentUser, labels }) {
   const [open, setOpen] = useState(false);
-  const [menu, setMenu] = useState(null);
 
   if (node.type === "dir") {
-    const handleContextMenu = (event) => {
-      if (!isTopLevel) return;
-      event.preventDefault();
-      event.stopPropagation();
-      setMenu({ x: event.clientX, y: event.clientY });
-    };
-
-    const markDataset = async (action) => {
-      if (onDatasetMark) await onDatasetMark(node.name, action);
-      setMenu(null);
-    };
-
     return (
-      <div onContextMenu={handleContextMenu}>
+      <div>
         <div style={styles.dirRow} onClick={() => setOpen((value) => !value)}>
           <span style={styles.caret}>{open ? "v" : ">"}</span>
           <span>{node.name}</span>
-          {node.is_discarded && <span style={styles.discarded}>已弃用</span>}
         </div>
 
         {open && (
@@ -77,23 +87,9 @@ const Node = memo(function Node({ node, onSelect, currentUser, isTopLevel = fals
                 node={child}
                 onSelect={onSelect}
                 currentUser={currentUser}
-                onDatasetMark={onDatasetMark}
+                labels={labels}
               />
             ))}
-          </div>
-        )}
-
-        {menu && isTopLevel && (
-          <div style={{ ...styles.contextMenu, top: menu.y, left: menu.x }} onClick={(event) => event.stopPropagation()}>
-            {node.is_discarded ? (
-              <button type="button" style={styles.contextButton} onClick={() => markDataset("cancel")}>
-                取消弃用
-              </button>
-            ) : (
-              <button type="button" style={{ ...styles.contextButton, color: "#dc2626" }} onClick={() => markDataset("discard")}>
-                标记为弃用
-              </button>
-            )}
           </div>
         )}
       </div>
@@ -105,6 +101,11 @@ const Node = memo(function Node({ node, onSelect, currentUser, isTopLevel = fals
   const activeUser = node.active_user;
   const isOwnedByCurrentUser = isActive && activeUser === currentUser;
   const isClickable = !isActive || isOwnedByCurrentUser;
+  const title = isAnnotated
+    ? labels.annotated
+    : isActive
+      ? labels.busyBy(activeUser)
+      : labels.unannotated;
 
   return (
     <button
@@ -112,7 +113,7 @@ const Node = memo(function Node({ node, onSelect, currentUser, isTopLevel = fals
       style={fileStyle(isAnnotated, isActive, isClickable)}
       disabled={!isClickable}
       onClick={() => onSelect(node.path)}
-      title={isAnnotated ? "已标注" : isActive ? `正在被 ${activeUser} 标注` : "未标注"}
+      title={title}
     >
       <span style={styles.fileName}>{node.name}</span>
       {isAnnotated && <span style={styles.annotatedMark}>OK</span>}
@@ -121,29 +122,29 @@ const Node = memo(function Node({ node, onSelect, currentUser, isTopLevel = fals
   );
 });
 
-export default function FileTree({ tree, onSelect, currentUser, onDatasetMark }) {
+export default function FileTree({ tree, onSelect, currentUser, language = "en" }) {
   const [filter, setFilter] = useState("all");
+  const labels = TEXT[language] || TEXT.en;
   const visibleTree = useMemo(() => filterTree(tree, filter), [tree, filter]);
   const counts = useMemo(() => countFiles(tree), [tree]);
 
   return (
-    <div onClick={() => {}}>
+    <div>
       <div style={styles.toolbar}>
         <div style={styles.toolbarRow}>
-          <label htmlFor="file-filter" style={styles.label}>文件筛选</label>
+          <label htmlFor="file-filter" style={styles.label}>{labels.fileFilter}</label>
           <select id="file-filter" value={filter} onChange={(event) => setFilter(event.target.value)} style={styles.select}>
-            {Object.entries(FILTERS).map(([value, label]) => (
+            {Object.entries(labels.filters).map(([value, label]) => (
               <option key={value} value={value}>{label}</option>
             ))}
           </select>
         </div>
 
         <div style={styles.counts}>
-          <span>总计 {counts.total}</span>
-          <span style={{ color: "#15803d" }}>已标注 {counts.annotated}</span>
-          <span style={{ color: "#2563eb" }}>未标注 {counts.unannotated}</span>
-          <span style={{ color: "#d97706" }}>占用 {counts.active}</span>
-          <span style={{ color: "#dc2626" }}>弃用数据集 {counts.discarded}</span>
+          <span>{labels.total} {counts.total}</span>
+          <span style={{ color: "#15803d" }}>{labels.annotated} {counts.annotated}</span>
+          <span style={{ color: "#2563eb" }}>{labels.unannotated} {counts.unannotated}</span>
+          <span style={{ color: "#d97706" }}>{labels.busy} {counts.active}</span>
         </div>
       </div>
 
@@ -154,11 +155,10 @@ export default function FileTree({ tree, onSelect, currentUser, onDatasetMark })
             node={node}
             onSelect={onSelect}
             currentUser={currentUser}
-            isTopLevel
-            onDatasetMark={onDatasetMark}
+            labels={labels}
           />
         ))}
-        {!visibleTree.length && <div style={styles.empty}>暂无匹配文件</div>}
+        {!visibleTree.length && <div style={styles.empty}>{labels.noMatchingFiles}</div>}
       </div>
     </div>
   );
@@ -218,31 +218,6 @@ const styles = {
   },
   children: {
     marginLeft: 14,
-  },
-  discarded: {
-    padding: "1px 5px",
-    borderRadius: 4,
-    background: "#fee2e2",
-    color: "#dc2626",
-    fontSize: 11,
-  },
-  contextMenu: {
-    position: "fixed",
-    zIndex: 1000,
-    minWidth: 120,
-    padding: 4,
-    border: "1px solid #cbd5e1",
-    borderRadius: 6,
-    background: "#fff",
-    boxShadow: "0 8px 24px rgba(15, 23, 42, 0.18)",
-  },
-  contextButton: {
-    width: "100%",
-    padding: "8px 10px",
-    border: "none",
-    background: "transparent",
-    textAlign: "left",
-    cursor: "pointer",
   },
   fileName: {
     overflow: "hidden",

@@ -10,9 +10,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from .config import DataProfile, load_profile
 from .services import (
     AnnotationLocks,
-    load_dropped_datasets,
     load_visualization_bundle,
-    mark_dataset as save_dataset_mark,
     next_available_file,
 )
 from .storage import (
@@ -57,7 +55,6 @@ def create_app(profile_name: str | None = None, profile: DataProfile | None = No
     def get_file_tree(refresh: bool = Query(False)):
         tree = list_data_files(settings, use_cache=not refresh)
         annotations = load_annotations(settings.annotation_file)
-        dropped_datasets = load_dropped_datasets(settings)
 
         def add_status(node: dict) -> None:
             if node["type"] == "file":
@@ -67,7 +64,6 @@ def create_app(profile_name: str | None = None, profile: DataProfile | None = No
                 node["active_user"] = active["user"] if active else None
                 return
 
-            node["is_discarded"] = node.get("name") in dropped_datasets
             for child in node.get("children", []):
                 add_status(child)
 
@@ -116,16 +112,6 @@ def create_app(profile_name: str | None = None, profile: DataProfile | None = No
         if not file_path:
             raise HTTPException(status_code=404, detail="No available unannotated files found")
         return {"file_path": file_path}
-
-    @app.post("/api/datasets/mark")
-    def mark_dataset(data: dict):
-        dataset_path = data.get("path")
-        action = data.get("action")
-        if not dataset_path or not action:
-            raise HTTPException(status_code=400, detail="dataset_path and action are required")
-        if action not in {"discard", "cancel"}:
-            raise HTTPException(status_code=400, detail="action must be 'discard' or 'cancel'")
-        return save_dataset_mark(settings, dataset_path, action)
 
     @app.post("/api/start_annotation")
     def start_annotation(data: dict):

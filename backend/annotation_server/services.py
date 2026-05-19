@@ -4,7 +4,7 @@ import time
 from pathlib import Path
 
 from .config import DataProfile
-from .storage import load_annotations, load_visualization, read_json, resolve_visualization_file, write_json
+from .storage import load_annotations, load_visualization, resolve_visualization_file
 
 
 class AnnotationLocks:
@@ -112,28 +112,6 @@ def load_visualization_bundle(
     result["scaling_factor"] = wav_data.get("scaling_factor", 8000) if wav_data else 8000
     result["psd"] = load_visualization(psd_file, profile.channel_filters) if resolve_visualization_file(psd_file) else {}
     return result
-
-
-def load_dropped_datasets(profile: DataProfile) -> dict:
-    data = read_json(profile.dropped_dataset_path, {"datasets": {}})
-    return data.get("datasets", {})
-
-
-def mark_dataset(profile: DataProfile, dataset_path: str, action: str) -> dict:
-    data = read_json(profile.dropped_dataset_path, {"datasets": {}})
-    data.setdefault("datasets", {})
-
-    if action == "discard":
-        from datetime import datetime
-        data["datasets"][dataset_path] = {
-            "is_discarded": True,
-            "marked_at": datetime.now().isoformat(),
-        }
-    elif action == "cancel":
-        data["datasets"].pop(dataset_path, None)
-
-    write_json(profile.dropped_dataset_path, data)
-    return {"success": True, "message": f"Dataset {dataset_path} {action}ed successfully"}
 
 
 def flatten_files(tree: list[dict]) -> list[str]:

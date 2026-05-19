@@ -75,8 +75,20 @@ def path_parts(record):
     return [part for part in relative.replace("\\", "/").split("/") if part]
 
 
-def get_subject(record):
-    for part in path_parts(record):
+def get_subject(record, subject_level=None):
+    parts = path_parts(record)
+    if subject_level is not None:
+        index = int(subject_level)
+        if -len(parts) <= index < len(parts):
+            return parts[index]
+
+    dataset = record.get("dataset")
+    if dataset == "tug_eeg" and "edf" in parts:
+        edf_index = parts.index("edf")
+        if edf_index + 1 < len(parts):
+            return parts[edf_index + 1]
+
+    for part in parts:
         if part.startswith("sub-"):
             return part
     return "__unknown_subject__"
@@ -90,7 +102,7 @@ def get_session(record):
 
 
 def record_allowed_by_rule(record, rule):
-    subject = get_subject(record)
+    subject = get_subject(record, rule.get("subject_level"))
     session = get_session(record)
     subjects = normalize_filter(rule.get("subjects"))
     exclude_subjects = normalize_filter(rule.get("exclude_subjects"))
@@ -119,7 +131,7 @@ def select_records_for_dataset(records, rule):
         if not record_allowed_by_rule(record, rule):
             continue
 
-        subject = get_subject(record)
+        subject = get_subject(record, rule.get("subject_level"))
         if subject not in records_by_subject:
             subject_order.append(subject)
         records_by_subject[subject].append(record)

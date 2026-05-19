@@ -9,7 +9,76 @@ const API_BASE_URL = (import.meta.env.VITE_API_HOST || "localhost:10000")
 
 const apiUrl = (path) => `http://${API_BASE_URL}/api${path}`;
 
-const emptyAnnotation = { bad_channels: {}, discarded: false };
+const emptyAnnotation = { psd_bad_channels: [], wav_bad_channels: {}, discarded: false };
+
+const TEXT = {
+  en: {
+    enterUsername: "Please enter your username",
+    newUsername: "Please enter a new username",
+    loadFileListError: "Failed to load the file list. Please check the backend service and Nginx proxy.",
+    fileBusy: "This file is being annotated by another user.",
+    startAnnotationError: "Failed to start annotation. Please try again later.",
+    loadVisualizationError: "Failed to load visualization data. Please check whether the data file is complete.",
+    setUserFirst: "Please set a username first.",
+    annotationSaved: (action) => `Annotation saved (${action})`,
+    submitError: "Failed to submit annotation. Please try again.",
+    allAnnotated: "All files have been annotated.",
+    allAnnotatedOrBusy: "All files are annotated or currently busy.",
+    nextFileError: "Failed to get the next file. Please try again later.",
+    title: "EEG Data Annotation",
+    currentFile: (current, total) => `Current file ${current}/${total}`,
+    selectFile: "Select a file from the left to start annotation",
+    refreshFiles: "Refresh files",
+    setUser: "Set user",
+    language: "中文",
+    current: "Current",
+    subBlock: "Sub-block",
+    discardFile: "Discard this file",
+    psdBadChannels: "PSD bad channels",
+    currentWavBadChannels: "Current waveform bad channels",
+    markedSubBlocks: "Marked waveform sub-blocks",
+    none: "None",
+    submitAnnotation: "Submit annotation",
+    submitting: "Submitting...",
+    refreshData: "Refresh data",
+    nextUnannotated: "Next unannotated",
+    loadingFileList: "Loading file list...",
+    selectDataFile: "Select a data file from the left.",
+  },
+  zh: {
+    enterUsername: "请输入您的用户名",
+    newUsername: "请输入新的用户名",
+    loadFileListError: "获取文件列表失败，请检查后端服务和 Nginx 代理配置。",
+    fileBusy: "该文件正在被其他用户标注。",
+    startAnnotationError: "开始标注失败，请稍后重试。",
+    loadVisualizationError: "加载可视化数据失败，请检查数据文件是否完整。",
+    setUserFirst: "请先设置用户名。",
+    annotationSaved: (action) => `标注已保存 (${action})`,
+    submitError: "提交标注失败，请重试。",
+    allAnnotated: "所有文件都已标注完成。",
+    allAnnotatedOrBusy: "所有文件都已标注完成或正在被其他用户标注。",
+    nextFileError: "获取下一个文件失败，请稍后重试。",
+    title: "EEG 数据标注",
+    currentFile: (current, total) => `当前文件 ${current}/${total}`,
+    selectFile: "请选择左侧文件开始标注",
+    refreshFiles: "刷新文件",
+    setUser: "设置用户",
+    language: "English",
+    current: "当前",
+    subBlock: "子图",
+    discardFile: "弃用该数据",
+    psdBadChannels: "PSD 坏道",
+    currentWavBadChannels: "当前波形坏道",
+    markedSubBlocks: "已标注波形子图",
+    none: "无",
+    submitAnnotation: "提交标注",
+    submitting: "正在提交...",
+    refreshData: "刷新数据",
+    nextUnannotated: "下一个未标注",
+    loadingFileList: "正在加载文件列表...",
+    selectDataFile: "请从左侧选择一个数据文件。",
+  },
+};
 
 function flattenFiles(nodes = []) {
   const files = [];
@@ -23,19 +92,35 @@ function flattenFiles(nodes = []) {
   return files;
 }
 
+function displayRelativePath(filePath) {
+  if (!filePath) return "";
+  const normalized = filePath.replace(/\\/g, "/");
+  const processedIndex = normalized.lastIndexOf("/processed/");
+  if (processedIndex >= 0) {
+    return normalized.slice(processedIndex + "/processed/".length);
+  }
+  const dataIndex = normalized.lastIndexOf("/data/");
+  if (dataIndex >= 0) {
+    return normalized.slice(dataIndex + 1);
+  }
+  return normalized.replace(/^\/+/, "");
+}
+
 function App() {
   const [fileTree, setFileTree] = useState([]);
   const [selectedFile, setSelectedFile] = useState(null);
   const [visData, setVisData] = useState({});
-  const [badChannels, setBadChannels] = useState({});
-  const [tempBadChannels, setTempBadChannels] = useState({});
+  const [psdBadChannels, setPsdBadChannels] = useState([]);
+  const [wavBadChannels, setWavBadChannels] = useState({});
   const [loadingTree, setLoadingTree] = useState(false);
   const [loadingData, setLoadingData] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
   const [currentUser, setCurrentUser] = useState("");
   const [subBlockIndex, setSubBlockIndex] = useState(0);
   const [isDataDiscarded, setIsDataDiscarded] = useState(false);
   const [fileAnnotationCache, setFileAnnotationCache] = useState({});
+  const [language, setLanguage] = useState(() => localStorage.getItem("annotation_language") || "en");
 
   const keepAliveRef = useRef(null);
   const activeFileRef = useRef(null);
@@ -44,7 +129,9 @@ function App() {
 
   const allFiles = useMemo(() => flattenFiles(fileTree), [fileTree]);
   const selectedFileIndex = allFiles.findIndex((file) => file.path === selectedFile);
-  const currentBadChannels = tempBadChannels[subBlockIndex] || [];
+  const labels = TEXT[language] || TEXT.en;
+  const currentWavBadChannels = wavBadChannels[subBlockIndex] || [];
+  const selectedRelativePath = displayRelativePath(selectedFile);
 
   useEffect(() => {
     const savedUser = localStorage.getItem("annotation_user");
@@ -53,12 +140,12 @@ function App() {
       return;
     }
 
-    const user = prompt("请输入您的用户名");
+    const user = prompt(labels.enterUsername);
     if (user?.trim()) {
       setCurrentUser(user.trim());
       localStorage.setItem("annotation_user", user.trim());
     }
-  }, []);
+  }, [labels.enterUsername]);
 
   useEffect(() => {
     if (!currentUser) return;
@@ -127,10 +214,6 @@ function App() {
   useEffect(() => {
     if (!selectedFile || !currentUser) return;
     fetchVisualizationData(selectedFile, subBlockIndex);
-    setTempBadChannels((prev) => {
-      if (prev[subBlockIndex] !== undefined) return prev;
-      return { ...prev, [subBlockIndex]: badChannels[subBlockIndex] || [] };
-    });
   }, [subBlockIndex]);
 
   const fetchFileTree = async (refresh = false) => {
@@ -141,8 +224,8 @@ function App() {
       setFileTree(res.data);
       setError(null);
     } catch (err) {
-      console.error("获取文件列表失败", err);
-      setError("获取文件列表失败，请检查后端服务和 Nginx 代理配置。");
+      console.error("Failed to load file list", err);
+      setError(labels.loadFileListError);
     } finally {
       setLoadingTree(false);
     }
@@ -158,10 +241,10 @@ function App() {
       return true;
     } catch (err) {
       if (err.response?.status === 409) {
-        alert(err.response.data?.detail || "该文件正在被其他用户标注。");
+        alert(err.response.data?.detail || labels.fileBusy);
       } else {
-        console.error("开始标注失败", err);
-        alert("开始标注失败，请稍后重试。");
+        console.error("Failed to start annotation", err);
+        alert(labels.startAnnotationError);
       }
       return false;
     }
@@ -175,7 +258,7 @@ function App() {
         user: currentUser,
       });
     } catch (err) {
-      console.error("结束标注失败", err);
+      console.error("Failed to end annotation", err);
     }
   };
 
@@ -187,7 +270,7 @@ function App() {
           file_path: filePath,
           user: currentUser,
         })
-        .catch((err) => console.error("心跳失败", err));
+        .catch((err) => console.error("Keep-alive failed", err));
     }, 60000);
   };
 
@@ -213,17 +296,17 @@ function App() {
       setError(null);
     } catch (err) {
       if (requestId !== visualizationRequestRef.current) return;
-      console.error("加载可视化数据失败", err);
+      console.error("Failed to load visualization data", err);
       setVisData({});
-      setError("加载可视化数据失败，请检查数据文件是否完整。");
+      setError(labels.loadVisualizationError);
     } finally {
       if (requestId === visualizationRequestRef.current) setLoadingData(false);
     }
   };
 
   const applyAnnotation = (annotation) => {
-    setBadChannels(annotation.bad_channels || {});
-    setTempBadChannels(annotation.bad_channels || {});
+    setPsdBadChannels(annotation.psd_bad_channels || []);
+    setWavBadChannels(annotation.wav_bad_channels || {});
     setIsDataDiscarded(Boolean(annotation.discarded));
   };
 
@@ -231,14 +314,15 @@ function App() {
     try {
       const res = await axios.get(apiUrl(`/annotation/${filePath}`));
       const annotation = {
-        bad_channels: res.data?.subblock_bad_channels || res.data?.bad_channels || {},
+        psd_bad_channels: res.data?.psd_bad_channels || [],
+        wav_bad_channels: res.data?.wav_bad_channels || res.data?.subblock_bad_channels || {},
         discarded: Boolean(res.data?.discarded),
       };
       setFileAnnotationCache((prev) => ({ ...prev, [filePath]: annotation }));
       applyAnnotation(annotation);
       return annotation;
     } catch (err) {
-      console.error("加载标注信息失败", err);
+      console.error("Failed to load annotation data", err);
       setFileAnnotationCache((prev) => ({ ...prev, [filePath]: emptyAnnotation }));
       applyAnnotation(emptyAnnotation);
       return emptyAnnotation;
@@ -256,57 +340,57 @@ function App() {
     setSubBlockIndex(0);
     setSelectedFile(filePath);
     setVisData({});
-    setTempBadChannels({});
-    setBadChannels({});
+    setPsdBadChannels([]);
+    setWavBadChannels({});
     setIsDataDiscarded(false);
     setError(null);
   };
 
-  const handleBadChannelsChange = (newBadChannels) => {
-    setTempBadChannels((prev) => ({
+  const handleWavBadChannelsChange = (newBadChannels) => {
+    setWavBadChannels((prev) => ({
       ...prev,
       [subBlockIndex]: newBadChannels,
     }));
   };
 
   const getSubBlocksWithBadChannels = () =>
-    Object.keys(tempBadChannels)
-      .filter((index) => tempBadChannels[index]?.length > 0)
+    Object.keys(wavBadChannels)
+      .filter((index) => wavBadChannels[index]?.length > 0)
       .map(Number)
       .sort((a, b) => a - b);
 
   const handleAnnotate = async () => {
     if (!selectedFile) return;
     if (!currentUser) {
-      alert("请先设置用户名。");
+      alert(labels.setUserFirst);
       return;
     }
 
-    setLoadingData(true);
+    setSubmitting(true);
     try {
       const payload = {
         file_path: selectedFile,
-        subblock_bad_channels: tempBadChannels,
-        bad_channels: tempBadChannels,
+        psd_bad_channels: psdBadChannels,
+        wav_bad_channels: wavBadChannels,
+        subblock_bad_channels: wavBadChannels,
         user: currentUser,
         discarded: isDataDiscarded,
         sub_block_index: subBlockIndex,
       };
       const response = await axios.post(apiUrl("/annotate"), payload);
-      const annotation = { bad_channels: tempBadChannels, discarded: isDataDiscarded };
+      const annotation = { psd_bad_channels: psdBadChannels, wav_bad_channels: wavBadChannels, discarded: isDataDiscarded };
 
-      setBadChannels(tempBadChannels);
       setFileAnnotationCache((prev) => ({ ...prev, [selectedFile]: annotation }));
       await endAnnotation(selectedFile);
       activeFileRef.current = null;
-      alert(`标注成功 (${response.data.action})`);
+      alert(labels.annotationSaved(response.data.action));
       await fetchFileTree();
       handleNextUnannotated();
     } catch (err) {
-      console.error("提交标注失败", err);
-      alert("提交标注失败，请重试。");
+      console.error("Failed to submit annotation", err);
+      alert(labels.submitError);
     } finally {
-      setLoadingData(false);
+      setSubmitting(false);
     }
   };
 
@@ -324,37 +408,15 @@ function App() {
       if (res.data?.file_path) {
         handleFileSelect(res.data.file_path);
       } else if (allFiles.length > 0) {
-        alert("所有文件都已标注完成。");
+        alert(labels.allAnnotated);
       }
     } catch (err) {
       if (err.response?.status === 404) {
-        alert("所有文件都已标注完成或正在被其他用户标注。");
+        alert(labels.allAnnotatedOrBusy);
       } else {
-        console.error("获取下一个文件失败", err);
-        setError("获取下一个文件失败，请稍后重试。");
+        console.error("Failed to get the next file", err);
+        setError(labels.nextFileError);
       }
-    }
-  };
-
-  const handleDatasetMark = async (datasetPath, action) => {
-    if (!currentUser) {
-      alert("请先设置用户名。");
-      return;
-    }
-
-    setLoadingTree(true);
-    try {
-      await axios.post(apiUrl("/datasets/mark"), {
-        path: datasetPath,
-        action,
-      });
-      await fetchFileTree();
-      alert(action === "discard" ? "数据集已标记为弃用。" : "已取消数据集弃用标记。");
-    } catch (err) {
-      console.error("标记数据集失败", err);
-      alert("标记数据集失败，请重试。");
-    } finally {
-      setLoadingTree(false);
     }
   };
 
@@ -369,28 +431,38 @@ function App() {
     <div style={styles.appShell}>
       <header style={styles.header}>
         <div>
-          <h1 style={styles.title}>EEG 数据标注</h1>
+          <h1 style={styles.title}>{labels.title}</h1>
           <div style={styles.subtitle}>
             {selectedFile
-              ? `当前文件 ${selectedFileIndex + 1}/${Math.max(allFiles.length, 1)}`
-              : "请选择左侧文件开始标注"}
+              ? labels.currentFile(selectedFileIndex + 1, Math.max(allFiles.length, 1))
+              : labels.selectFile}
           </div>
         </div>
         <div style={styles.headerActions}>
           <button style={styles.secondaryButton} onClick={() => fetchFileTree(true)} disabled={loadingTree}>
-            刷新文件
+            {labels.refreshFiles}
           </button>
           <button
             style={styles.secondaryButton}
             onClick={() => {
-              const user = prompt("请输入新的用户名", currentUser);
+              const nextLanguage = language === "en" ? "zh" : "en";
+              setLanguage(nextLanguage);
+              localStorage.setItem("annotation_language", nextLanguage);
+            }}
+          >
+            {labels.language}
+          </button>
+          <button
+            style={styles.secondaryButton}
+            onClick={() => {
+              const user = prompt(labels.newUsername, currentUser);
               if (user?.trim()) {
                 setCurrentUser(user.trim());
                 localStorage.setItem("annotation_user", user.trim());
               }
             }}
           >
-            {currentUser || "设置用户"}
+            {currentUser || labels.setUser}
           </button>
         </div>
       </header>
@@ -401,7 +473,7 @@ function App() {
             tree={fileTree}
             onSelect={handleFileSelect}
             currentUser={currentUser}
-            onDatasetMark={handleDatasetMark}
+            language={language}
           />
         </aside>
 
@@ -411,20 +483,27 @@ function App() {
           {selectedFile ? (
             <div style={styles.workbench}>
               <section style={styles.viewerPanel}>
+                <div style={styles.currentPathBar} title={selectedFile}>
+                  <span style={styles.currentPathLabel}>{labels.current}</span>
+                  <span style={styles.currentPathText}>{selectedRelativePath}</span>
+                </div>
                 <WaveformViewer
                   data={visData}
-                  badChannels={currentBadChannels}
-                  setBadChannels={handleBadChannelsChange}
+                  psdBadChannels={psdBadChannels}
+                  wavBadChannels={currentWavBadChannels}
+                  setPsdBadChannels={setPsdBadChannels}
+                  setWavBadChannels={handleWavBadChannelsChange}
                   loading={loadingData}
                   onSelectSubBlock={setSubBlockIndex}
                   currentSubBlockIndex={subBlockIndex}
                   markedSubBlocks={getSubBlocksWithBadChannels()}
+                  language={language}
                 />
               </section>
 
               <aside style={styles.annotationPanel}>
                 <div style={styles.panelBlock}>
-                  <div style={styles.panelLabel}>子图</div>
+                  <div style={styles.panelLabel}>{labels.subBlock}</div>
                   <div style={styles.panelValue}>
                     {subBlockIndex + 1}/{Math.max(1, Number(visData.totalSubBlocks || 1))}
                   </div>
@@ -437,40 +516,47 @@ function App() {
                       checked={isDataDiscarded}
                       onChange={(event) => setIsDataDiscarded(event.target.checked)}
                     />
-                    弃用该数据
+                    {labels.discardFile}
                   </label>
                 </div>
 
                 <div style={styles.panelBlock}>
-                  <div style={styles.panelLabel}>当前坏道</div>
+                  <div style={styles.panelLabel}>{labels.psdBadChannels}</div>
                   <div style={styles.badChannelBox}>
-                    {currentBadChannels.length ? currentBadChannels.join(", ") : "无"}
+                    {psdBadChannels.length ? psdBadChannels.join(", ") : labels.none}
                   </div>
                 </div>
 
                 <div style={styles.panelBlock}>
-                  <div style={styles.panelLabel}>已标注子图</div>
+                  <div style={styles.panelLabel}>{labels.currentWavBadChannels}</div>
                   <div style={styles.badChannelBox}>
-                    {getSubBlocksWithBadChannels().length
-                      ? getSubBlocksWithBadChannels().map((index) => index + 1).join(", ")
-                      : "无"}
+                    {currentWavBadChannels.length ? currentWavBadChannels.join(", ") : labels.none}
                   </div>
                 </div>
 
-                <button style={styles.primaryButton} onClick={handleAnnotate} disabled={loadingData}>
-                  提交标注
+                <div style={styles.panelBlock}>
+                  <div style={styles.panelLabel}>{labels.markedSubBlocks}</div>
+                  <div style={styles.badChannelBox}>
+                    {getSubBlocksWithBadChannels().length
+                      ? getSubBlocksWithBadChannels().map((index) => index + 1).join(", ")
+                      : labels.none}
+                  </div>
+                </div>
+
+                <button style={styles.primaryButton} onClick={handleAnnotate} disabled={submitting}>
+                  {submitting ? labels.submitting : labels.submitAnnotation}
                 </button>
                 <button style={styles.secondaryButtonWide} onClick={refreshCurrentData} disabled={loadingData}>
-                  刷新数据
+                  {labels.refreshData}
                 </button>
                 <button style={styles.secondaryButtonWide} onClick={handleNextUnannotated}>
-                  下一个未标注
+                  {labels.nextUnannotated}
                 </button>
               </aside>
             </div>
           ) : (
             <div style={styles.emptyState}>
-              {loadingTree ? "正在加载文件列表..." : "请从左侧选择一个数据文件。"}
+              {loadingTree ? labels.loadingFileList : labels.selectDataFile}
             </div>
           )}
         </main>
@@ -552,11 +638,41 @@ const styles = {
   viewerPanel: {
     minWidth: 0,
     minHeight: 0,
+    display: "flex",
+    flexDirection: "column",
+    gap: 8,
     padding: 10,
     border: "1px solid #dbe3ef",
     borderRadius: 8,
     background: "#ffffff",
     overflow: "hidden",
+  },
+  currentPathBar: {
+    flex: "0 0 auto",
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    minHeight: 32,
+    padding: "6px 9px",
+    border: "1px solid #e5e7eb",
+    borderRadius: 6,
+    background: "#f8fafc",
+    minWidth: 0,
+  },
+  currentPathLabel: {
+    flex: "0 0 auto",
+    color: "#64748b",
+    fontSize: 12,
+    fontWeight: 800,
+  },
+  currentPathText: {
+    minWidth: 0,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+    color: "#0f172a",
+    fontSize: 13,
+    fontFamily: "Consolas, Monaco, monospace",
   },
   annotationPanel: {
     minWidth: 0,

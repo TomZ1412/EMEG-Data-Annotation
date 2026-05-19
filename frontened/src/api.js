@@ -28,5 +28,3 @@ export const getNextUnannotated = (user, currentFile = "") =>
   unwrap(apiClient.get("/next_unannotated", {
     params: { user, current_file: currentFile },
   }));
-export const markDataset = (path, action) =>
-  unwrap(apiClient.post("/datasets/mark", { path, action }));

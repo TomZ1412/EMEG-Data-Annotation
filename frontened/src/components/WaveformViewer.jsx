@@ -23,20 +23,52 @@ const CHANNEL_COLORS = [
   "#eeca3b",
 ];
 
+const TEXT = {
+  en: {
+    waveform: "Waveform",
+    badChannels: "bad channels",
+    markAll: "Mark all",
+    clear: "Clear",
+    scale: "Scale",
+    markedSubBlocks: "Marked sub-blocks",
+    none: "None",
+    noWaveformData: "No waveform data",
+    noPsdData: "No PSD data",
+    loading: "Loading...",
+    goToSubBlock: (index) => `Go to sub-block ${index + 1}`,
+  },
+  zh: {
+    waveform: "波形",
+    badChannels: "坏道",
+    markAll: "全选",
+    clear: "清空",
+    scale: "缩放",
+    markedSubBlocks: "已标注子图",
+    none: "无",
+    noWaveformData: "暂无波形数据",
+    noPsdData: "暂无 PSD 数据",
+    loading: "加载中...",
+    goToSubBlock: (index) => `跳转到子图 ${index + 1}`,
+  },
+};
+
 export default function WaveformViewer({
   data,
-  badChannels = [],
-  setBadChannels,
+  psdBadChannels = [],
+  wavBadChannels = [],
+  setPsdBadChannels,
+  setWavBadChannels,
   loading,
   onSelectSubBlock,
   currentSubBlockIndex = 0,
   markedSubBlocks = [],
+  language = "en",
 }) {
   const waveformRef = useRef(null);
   const psdRef = useRef(null);
   const activePlotRef = useRef(null);
   const scrollTopRef = useRef(0);
-  const badChannelsRef = useRef(badChannels);
+  const badChannelsRef = useRef([]);
 
   const [activeView, setActiveView] = useState("psd");
   const [scalingFactor, setScalingFactor] = useState(8000);
@@ -47,16 +79,19 @@ export default function WaveformViewer({
   const psdData = data?.psd || null;
   const psdSeries = psdData?.psd || {};
   const psdFrequencies = psdData?.frequencies || [];
+  const labels = TEXT[language] || TEXT.en;
+  const activeBadChannels = activeView === "psd" ? psdBadChannels : wavBadChannels;
+  const setActiveBadChannels = activeView === "psd" ? setPsdBadChannels : setWavBadChannels;
 
   useEffect(() => {
-    badChannelsRef.current = badChannels;
-  }, [badChannels]);
+    badChannelsRef.current = activeBadChannels;
+  }, [activeBadChannels]);
 
   const channelNames = useMemo(() => {
-    if (Object.keys(wavData).length) return Object.keys(wavData);
-    if (Object.keys(psdSeries).length) return Object.keys(psdSeries);
+    if (activeView === "psd") return Object.keys(psdSeries);
+    if (activeView === "wav") return Object.keys(wavData);
     return [];
-  }, [wavData, psdSeries]);
+  }, [activeView, wavData, psdSeries]);
 
   useEffect(() => {
     if (activeView === "psd" && !Object.keys(psdSeries).length && Object.keys(wavData).length) {
@@ -74,9 +109,9 @@ export default function WaveformViewer({
   }, []);
 
   const toggleChannel = (channel) => {
-    if (!channel || !setBadChannels) return;
+    if (!channel || !setActiveBadChannels) return;
     const currentBadChannels = badChannelsRef.current;
-    setBadChannels(
+    setActiveBadChannels(
       currentBadChannels.includes(channel)
         ? currentBadChannels.filter((item) => item !== channel)
         : [...currentBadChannels, channel]
@@ -84,14 +119,14 @@ export default function WaveformViewer({
   };
 
   const toggleSelectedChannels = (channels) => {
-    if (!channels.length || !setBadChannels) return;
+    if (!channels.length || !setActiveBadChannels) return;
     const currentBadChannels = badChannelsRef.current;
     const uniqueChannels = [...new Set(channels)];
     const shouldClear = uniqueChannels.every((channel) => currentBadChannels.includes(channel));
     if (shouldClear) {
-      setBadChannels(currentBadChannels.filter((channel) => !uniqueChannels.includes(channel)));
+      setActiveBadChannels(currentBadChannels.filter((channel) => !uniqueChannels.includes(channel)));
     } else {
-      setBadChannels([...new Set([...currentBadChannels, ...uniqueChannels])]);
+      setActiveBadChannels([...new Set([...currentBadChannels, ...uniqueChannels])]);
     }
   };
 
@@ -171,7 +206,8 @@ export default function WaveformViewer({
   };
 
   const channelLine = (channel, index = 0, colorful = false) => {
-    const isBad = badChannels.includes(channel);
+    const currentBadChannels = activeView === "psd" ? psdBadChannels : wavBadChannels;
+    const isBad = currentBadChannels.includes(channel);
     const isHovered = hoveredChannel === channel;
     return {
       color: isBad
@@ -218,7 +254,7 @@ export default function WaveformViewer({
           mode: "lines",
           line,
           hoverinfo: "x+y+name",
-          opacity: badChannels.includes(channel) ? 1 : 0.88,
+          opacity: wavBadChannels.includes(channel) ? 1 : 0.88,
         };
       });
 
@@ -231,7 +267,7 @@ export default function WaveformViewer({
         showarrow: false,
         font: {
           size: 10,
-          color: badChannels.includes(channel) ? BAD_COLOR : "#111827",
+          color: wavBadChannels.includes(channel) ? BAD_COLOR : "#111827",
         },
         xanchor: "right",
         align: "right",
@@ -278,7 +314,7 @@ export default function WaveformViewer({
     return () => {
       cancelled = true;
     };
-  }, [activeView, wavData, badChannels, scalingFactor]);
+  }, [activeView, wavData, wavBadChannels, scalingFactor]);
 
   useEffect(() => {
     if (activeView !== "wav" || !activePlotRef.current || !Object.keys(wavData).length) return;
@@ -289,7 +325,7 @@ export default function WaveformViewer({
       "line.width": style.widths,
       opacity: style.opacities,
     });
-  }, [activeView, wavData, badChannels, hoveredChannel]);
+  }, [activeView, wavData, wavBadChannels, hoveredChannel]);
 
   useEffect(() => {
     if (activeView !== "psd") return;
@@ -375,14 +411,14 @@ export default function WaveformViewer({
       "line.width": style.widths,
       opacity: style.opacities,
     });
-  }, [activeView, psdSeries, badChannels, hoveredChannel]);
+  }, [activeView, psdSeries, psdBadChannels, hoveredChannel]);
 
   const setAllChannels = () => {
-    if (channelNames.length && setBadChannels) setBadChannels(channelNames);
+    if (channelNames.length && setActiveBadChannels) setActiveBadChannels(channelNames);
   };
 
   const clearChannels = () => {
-    if (setBadChannels) setBadChannels([]);
+    if (setActiveBadChannels) setActiveBadChannels([]);
   };
 
   const setSubBlock = (value) => {
@@ -400,7 +436,7 @@ export default function WaveformViewer({
         <div style={styles.tabs}>
           {[
             ["psd", "PSD"],
-            ["wav", "Waveform"],
+            ["wav", labels.waveform],
           ].map(([key, label]) => (
             <button key={key} onClick={() => setActiveView(key)} style={tabStyle(activeView === key)}>
               {label}
@@ -409,20 +445,20 @@ export default function WaveformViewer({
         </div>
 
         <div style={styles.actions}>
-          <strong>{badChannels.length}</strong>
-          <span>/ {channelNames.length} bad channels</span>
+          <strong>{activeBadChannels.length}</strong>
+          <span>/ {channelNames.length} {labels.badChannels}</span>
           <button type="button" onClick={setAllChannels} disabled={!channelNames.length || loading} style={buttonStyle("#dc2626")}>
-            Mark all
+            {labels.markAll}
           </button>
-          <button type="button" onClick={clearChannels} disabled={!badChannels.length || loading} style={buttonStyle("#f59e0b")}>
-            Clear
+          <button type="button" onClick={clearChannels} disabled={!activeBadChannels.length || loading} style={buttonStyle("#f59e0b")}>
+            {labels.clear}
           </button>
         </div>
       </div>
 
       {activeView === "wav" && (
         <div style={styles.controlBar}>
-          <span style={{ minWidth: 88 }}>Scale {scalingFactor.toFixed(2)}x</span>
+          <span style={{ minWidth: 88 }}>{labels.scale} {scalingFactor.toFixed(2)}x</span>
           <input
             type="range"
             min="0.1"
@@ -449,29 +485,30 @@ export default function WaveformViewer({
           blocks={markedSubBlocks}
           currentSubBlockIndex={currentSubBlockIndex}
           onSelectSubBlock={onSelectSubBlock}
+          labels={labels}
         />
       )}
 
       <div style={styles.plotFrame}>
         <div style={styles.plotArea}>
-          {loading && <LoadingOverlay />}
+          {loading && <LoadingOverlay text={labels.loading} />}
           {activeView === "wav" ? (
             Object.keys(wavData).length ? (
               <div ref={waveformRef} style={styles.waveformPlot} />
             ) : (
-              <EmptyState text="No waveform data" />
+              <EmptyState text={labels.noWaveformData} />
             )
           ) : Object.keys(psdSeries).length ? (
             <div ref={psdRef} style={styles.psdPlot} />
           ) : (
-            <EmptyState text="No PSD data" />
+            <EmptyState text={labels.noPsdData} />
           )}
         </div>
 
         {activeView === "psd" && Object.keys(psdSeries).length > 0 && (
           <ChannelList
             channels={Object.keys(psdSeries)}
-            badChannels={badChannels}
+            badChannels={psdBadChannels}
             hoveredChannel={hoveredChannel}
             onHover={setHoveredChannel}
             onToggle={toggleChannel}
@@ -541,19 +578,19 @@ function ChannelList({ channels, badChannels, hoveredChannel, onHover, onToggle 
   );
 }
 
-function MarkedSubBlockBar({ blocks, currentSubBlockIndex, onSelectSubBlock }) {
+function MarkedSubBlockBar({ blocks, currentSubBlockIndex, onSelectSubBlock, labels }) {
   if (!blocks.length) {
     return (
       <div style={styles.markedBar}>
-        <span style={styles.markedLabel}>Marked sub-blocks</span>
-        <span style={styles.markedEmpty}>None</span>
+        <span style={styles.markedLabel}>{labels.markedSubBlocks}</span>
+        <span style={styles.markedEmpty}>{labels.none}</span>
       </div>
     );
   }
 
   return (
     <div style={styles.markedBar}>
-      <span style={styles.markedLabel}>Marked sub-blocks</span>
+      <span style={styles.markedLabel}>{labels.markedSubBlocks}</span>
       <div style={styles.markedScroller}>
         {blocks.map((index) => {
           const active = index === currentSubBlockIndex;
@@ -563,7 +600,7 @@ function MarkedSubBlockBar({ blocks, currentSubBlockIndex, onSelectSubBlock }) {
               type="button"
               onClick={() => onSelectSubBlock?.(index)}
               style={markedButtonStyle(active)}
-              title={`Go to sub-block ${index + 1}`}
+              title={labels.goToSubBlock(index)}
             >
               {index + 1}
             </button>
@@ -578,8 +615,8 @@ function EmptyState({ text }) {
   return <div style={styles.emptyState}>{text}</div>;
 }
 
-function LoadingOverlay() {
-  return <div style={styles.loadingOverlay}>Loading...</div>;
+function LoadingOverlay({ text }) {
+  return <div style={styles.loadingOverlay}>{text}</div>;
 }
 
 const styles = {

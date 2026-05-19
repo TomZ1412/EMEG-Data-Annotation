@@ -59,7 +59,6 @@ You can override paths without editing code:
 - `ANNO_DATA_SOURCE` defaults to `processed`; set to `raw` only for legacy raw-tree mode.
 - `ANNO_VIS_DATA_ROOT`
 - `ANNO_ANNOTATION_FILE`
-- `ANNO_DROPPED_DATASET_PATH`
 - `ANNO_CACHE_TREE_PATH`
 - `ANNO_FILE_SUFFIXES`
 - `ANNO_CHANNEL_FILTERS`
@@ -70,7 +69,6 @@ Recommended processed-only server environment:
 ANNO_DATA_SOURCE=processed
 ANNO_VIS_DATA_ROOT=/data/anno/processed
 ANNO_ANNOTATION_FILE=/data/anno/annotations/bad_channels.jsonl
-ANNO_DROPPED_DATASET_PATH=/data/anno/annotations/dropped_dataset.json
 ANNO_CACHE_TREE_PATH=/data/anno/cache/file_tree
 ```
 

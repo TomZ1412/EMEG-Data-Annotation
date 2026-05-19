@@ -51,14 +51,36 @@ def load_annotations(annotation_file: Path, file_path: str | None = None) -> dic
     return annotations if file_path is None else annotations.get(file_path, {})
 
 
+def _as_channel_list(value: Any) -> list:
+    return value if isinstance(value, list) else []
+
+
+def _as_subblock_channels(value: Any) -> dict:
+    if isinstance(value, dict):
+        return {str(key): _as_channel_list(channels) for key, channels in value.items()}
+    if isinstance(value, list):
+        return {"0": value}
+    return {}
+
+
 def normalize_annotation(record: dict) -> dict:
-    subblock_bad_channels = record.get("subblock_bad_channels")
-    if subblock_bad_channels is None:
-        subblock_bad_channels = {"0": record.get("bad_channels", [])}
+    legacy_bad_channels = record.get("bad_channels", [])
+    legacy_subblock_bad_channels = record.get("subblock_bad_channels")
+    psd_bad_channels = record.get("psd_bad_channels")
+    wav_bad_channels = record.get("wav_bad_channels")
+
+    if psd_bad_channels is None:
+        psd_bad_channels = legacy_bad_channels if isinstance(legacy_bad_channels, list) else []
+    if wav_bad_channels is None:
+        wav_bad_channels = legacy_subblock_bad_channels
+    if wav_bad_channels is None:
+        wav_bad_channels = legacy_bad_channels if isinstance(legacy_bad_channels, dict) else {}
 
     return {
         "file_path": record["file_path"],
-        "subblock_bad_channels": subblock_bad_channels,
+        "psd_bad_channels": _as_channel_list(psd_bad_channels),
+        "wav_bad_channels": _as_subblock_channels(wav_bad_channels),
+        "subblock_bad_channels": _as_subblock_channels(wav_bad_channels),
         "discarded": bool(record.get("discarded", False)),
         "user": record.get("user", ""),
     }
@@ -81,18 +103,33 @@ def write_annotation(annotation_file: Path, record: dict) -> None:
 def get_annotation_for_file(annotation_file: Path, file_path: str) -> dict:
     annotation = load_annotations(annotation_file, file_path)
     if not annotation:
-        return {"bad_channels": [], "subblock_bad_channels": {}, "discarded": False}
+        return {
+            "bad_channels": [],
+            "psd_bad_channels": [],
+            "wav_bad_channels": {},
+            "subblock_bad_channels": {},
+            "discarded": False,
+        }
 
-    subblock_bad_channels = annotation.get("subblock_bad_channels")
-    if subblock_bad_channels is None:
-        bad_channels = annotation.get("bad_channels", [])
-        subblock_bad_channels = {"0": bad_channels}
-    else:
-        bad_channels = next(iter(subblock_bad_channels.values()), [])
+    psd_bad_channels = annotation.get("psd_bad_channels")
+    wav_bad_channels = annotation.get("wav_bad_channels")
+    legacy_bad_channels = annotation.get("bad_channels", [])
+    legacy_subblock_bad_channels = annotation.get("subblock_bad_channels")
+
+    if psd_bad_channels is None:
+        psd_bad_channels = legacy_bad_channels if isinstance(legacy_bad_channels, list) else []
+    if wav_bad_channels is None:
+        wav_bad_channels = legacy_subblock_bad_channels
+    if wav_bad_channels is None:
+        wav_bad_channels = legacy_bad_channels if isinstance(legacy_bad_channels, dict) else {}
+
+    wav_bad_channels = _as_subblock_channels(wav_bad_channels)
 
     return {
-        "bad_channels": bad_channels,
-        "subblock_bad_channels": subblock_bad_channels,
+        "bad_channels": next(iter(wav_bad_channels.values()), []),
+        "psd_bad_channels": _as_channel_list(psd_bad_channels),
+        "wav_bad_channels": wav_bad_channels,
+        "subblock_bad_channels": wav_bad_channels,
         "discarded": bool(annotation.get("discarded", False)),
     }
 

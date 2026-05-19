@@ -12,6 +12,15 @@
       "subjects": ["sub-01", "sub-02"],
       "sessions": ["ses-01"],
       "max_files": 30
+    },
+    "tug_eeg": {
+      "subjects": ["150", "125"],
+      "max_files_per_subject": 20
+    },
+    "customDatasetWithoutSubPrefix": {
+      "subject_level": 1,
+      "subjects": ["subjectA", "subjectB"],
+      "max_files_per_subject": 10
     }
   }
 }
