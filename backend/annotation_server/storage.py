@@ -12,6 +12,7 @@ from .config import DataProfile
 
 
 PROCESSED_SUFFIXES = {".json", ".npz"}
+ARTIFACT_WINDOW_SECONDS = 30
 
 
 def read_json(path: Path, default: Any) -> Any:
@@ -97,6 +98,26 @@ def _as_subblock_artifacts(value: Any) -> dict:
     return {}
 
 
+def _as_artifacts(value: Any) -> list:
+    if isinstance(value, list):
+        return _as_artifact_list(value)
+    if isinstance(value, dict):
+        artifacts = []
+        for key, items in value.items():
+            try:
+                offset = int(key) * ARTIFACT_WINDOW_SECONDS
+            except (TypeError, ValueError):
+                offset = 0
+            for item in _as_artifact_list(items):
+                artifacts.append({
+                    "channel": item["channel"],
+                    "start_time": item["start_time"] + offset,
+                    "end_time": item["end_time"] + offset,
+                })
+        return artifacts
+    return []
+
+
 def normalize_annotation(record: dict) -> dict:
     legacy_bad_channels = record.get("bad_channels", [])
     legacy_subblock_bad_channels = record.get("subblock_bad_channels")
@@ -116,7 +137,7 @@ def normalize_annotation(record: dict) -> dict:
         "psd_bad_channels": _as_channel_list(psd_bad_channels),
         "wav_bad_channels": _as_subblock_channels(wav_bad_channels),
         "subblock_bad_channels": _as_subblock_channels(wav_bad_channels),
-        "artifacts": _as_subblock_artifacts(artifacts),
+        "artifacts": _as_artifacts(artifacts),
         "discarded": bool(record.get("discarded", False)),
         "user": record.get("user", ""),
     }
@@ -167,7 +188,7 @@ def get_annotation_for_file(annotation_file: Path, file_path: str) -> dict:
         "psd_bad_channels": _as_channel_list(psd_bad_channels),
         "wav_bad_channels": wav_bad_channels,
         "subblock_bad_channels": wav_bad_channels,
-        "artifacts": _as_subblock_artifacts(annotation.get("artifacts")),
+        "artifacts": _as_artifacts(annotation.get("artifacts")),
         "discarded": bool(annotation.get("discarded", False)),
     }
 

@@ -4,6 +4,7 @@ import * as Plotly from "plotly.js-dist-min";
 const BAD_COLOR = "#dc2626";
 const HOVER_COLOR = "#f59e0b";
 const GOOD_COLOR = "#2563eb";
+const WINDOW_DURATION_SECONDS = 30;
 const CHANNEL_COLORS = [
   "#1f77b4",
   "#ff7f0e",
@@ -54,6 +55,17 @@ const TEXT = {
   },
 };
 
+const ARTIFACT_TEXT = {
+  en: {
+    pending: (channel, time) => `Artifact start: ${channel} @ ${time.toFixed(2)}s`,
+    help: "Right-click twice on the same waveform channel to mark an artifact interval.",
+  },
+  zh: {
+    pending: (channel, time) => `\u4f2a\u8ff9\u8d77\u70b9\uff1a${channel} @ ${time.toFixed(2)}s`,
+    help: "\u5728\u540c\u4e00\u6ce2\u5f62\u901a\u9053\u4e0a\u53f3\u952e\u4e24\u6b21\uff0c\u6807\u8bb0\u4e24\u4e2a\u65f6\u95f4\u70b9\u4e4b\u95f4\u7684\u4f2a\u8ff9\u533a\u95f4\u3002",
+  },
+};
+
 export default function WaveformViewer({
   data,
   psdBadChannels = [],
@@ -85,6 +97,7 @@ export default function WaveformViewer({
   const psdSeries = psdData?.psd || {};
   const psdFrequencies = psdData?.frequencies || [];
   const labels = TEXT[language] || TEXT.en;
+  const artifactLabels = ARTIFACT_TEXT[language] || ARTIFACT_TEXT.en;
   const activeBadChannels = activeView === "psd" ? psdBadChannels : wavBadChannels;
   const setActiveBadChannels = activeView === "psd" ? setPsdBadChannels : setWavBadChannels;
 
@@ -230,7 +243,8 @@ export default function WaveformViewer({
     };
   };
 
-  const normalizeArtifactTime = (time) => Math.max(0, Math.min(30, Number(time) || 0));
+  const normalizeArtifactTime = (time) => Math.max(0, Math.min(WINDOW_DURATION_SECONDS, Number(time) || 0));
+  const currentWindowStart = currentSubBlockIndex * WINDOW_DURATION_SECONDS;
 
   const artifactShapes = (channels, offset) =>
     artifacts
@@ -238,13 +252,16 @@ export default function WaveformViewer({
       .map((item) => {
         const index = channels.indexOf(item.channel);
         if (index < 0) return null;
+        const globalStart = Number(item.start_time);
+        const globalEnd = Number(item.end_time);
+        if (globalStart >= currentWindowStart + WINDOW_DURATION_SECONDS || globalEnd <= currentWindowStart) return null;
         const center = (channels.length - index - 1) * offset;
         return {
           type: "rect",
           xref: "x",
           yref: "y",
-          x0: normalizeArtifactTime(item.start_time),
-          x1: normalizeArtifactTime(item.end_time),
+          x0: normalizeArtifactTime(globalStart - currentWindowStart),
+          x1: normalizeArtifactTime(globalEnd - currentWindowStart),
           y0: center - offset * 0.38,
           y1: center + offset * 0.38,
           fillcolor: "rgba(245, 158, 11, 0.18)",
@@ -274,16 +291,22 @@ export default function WaveformViewer({
     if (!setArtifacts) return;
     event.preventDefault();
     event.stopPropagation();
+    const container = waveformRef.current;
+    if (container) scrollTopRef.current = container.scrollTop;
     const point = pointFromContextMenu(event, plotDiv, channels, offset);
     if (!point) return;
 
     if (!pendingArtifact || pendingArtifact.channel !== point.channel) {
-      setPendingArtifact(point);
+      setPendingArtifact({
+        ...point,
+        globalTime: currentSubBlockIndex * WINDOW_DURATION_SECONDS + point.time,
+      });
       return;
     }
 
-    const start = Math.min(pendingArtifact.time, point.time);
-    const end = Math.max(pendingArtifact.time, point.time);
+    const pointGlobalTime = currentSubBlockIndex * WINDOW_DURATION_SECONDS + point.time;
+    const start = Math.min(pendingArtifact.globalTime, pointGlobalTime);
+    const end = Math.max(pendingArtifact.globalTime, pointGlobalTime);
     if (Math.abs(end - start) < 0.01) return;
     setArtifacts([...artifacts, { channel: point.channel, start_time: start, end_time: end }]);
     setPendingArtifact(null);
@@ -307,7 +330,7 @@ export default function WaveformViewer({
       const samples = Math.max(...channels.map((channel) => wavData[channel]?.length || 0));
       if (!samples) return;
 
-      const totalDuration = 30;
+      const totalDuration = WINDOW_DURATION_SECONDS;
       const time = Array.from({ length: samples }, (_, index) => index * (totalDuration / samples));
       const offset = 0.75;
 
@@ -348,8 +371,8 @@ export default function WaveformViewer({
           type: "line",
           xref: "x",
           yref: "y",
-          x0: pendingArtifact.time,
-          x1: pendingArtifact.time,
+          x0: pendingArtifact.globalTime - currentWindowStart,
+          x1: pendingArtifact.globalTime - currentWindowStart,
           y0: center - offset * 0.45,
           y1: center + offset * 0.45,
           line: { color: "#f59e0b", width: 2, dash: "dot" },
@@ -386,6 +409,7 @@ export default function WaveformViewer({
 
       if (cancelled) return;
       plotDiv.on("plotly_click", (event) => {
+        if (event?.event?.button !== 0) return;
         scrollTopRef.current = container.scrollTop;
         toggleChannel(event.points?.[0]?.data?.name);
       });
@@ -577,8 +601,8 @@ export default function WaveformViewer({
       {activeView === "wav" && (
         <div style={styles.artifactHint}>
           {pendingArtifact
-            ? (labels.artifactPending || TEXT.en.artifactPending)(pendingArtifact.channel, pendingArtifact.time)
-            : (labels.artifactHelp || TEXT.en.artifactHelp)}
+            ? artifactLabels.pending(pendingArtifact.channel, pendingArtifact.globalTime)
+            : artifactLabels.help}
         </div>
       )}
 

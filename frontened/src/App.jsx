@@ -9,7 +9,8 @@ const API_BASE_URL = (import.meta.env.VITE_API_HOST || "localhost:10000")
 
 const apiUrl = (path) => `http://${API_BASE_URL}/api${path}`;
 
-const emptyAnnotation = { psd_bad_channels: [], wav_bad_channels: {}, artifacts: {}, discarded: false };
+const ARTIFACT_WINDOW_SECONDS = 30;
+const emptyAnnotation = { psd_bad_channels: [], wav_bad_channels: {}, artifacts: [], discarded: false };
 
 const TEXT = {
   en: {
@@ -107,13 +108,30 @@ function displayRelativePath(filePath) {
   return normalized.replace(/^\/+/, "");
 }
 
+function normalizeArtifacts(value) {
+  if (Array.isArray(value)) return value;
+  if (!value || typeof value !== "object") return [];
+
+  return Object.entries(value).flatMap(([blockIndex, items]) => {
+    const offset = Number(blockIndex) * ARTIFACT_WINDOW_SECONDS;
+    if (!Array.isArray(items)) return [];
+    return items
+      .filter((item) => item?.channel)
+      .map((item) => ({
+        channel: item.channel,
+        start_time: offset + Number(item.start_time || 0),
+        end_time: offset + Number(item.end_time || 0),
+      }));
+  });
+}
+
 function App() {
   const [fileTree, setFileTree] = useState([]);
   const [selectedFile, setSelectedFile] = useState(null);
   const [visData, setVisData] = useState({});
   const [psdBadChannels, setPsdBadChannels] = useState([]);
   const [wavBadChannels, setWavBadChannels] = useState({});
-  const [artifactSegments, setArtifactSegments] = useState({});
+  const [artifactSegments, setArtifactSegments] = useState([]);
   const [loadingTree, setLoadingTree] = useState(false);
   const [loadingData, setLoadingData] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -133,7 +151,13 @@ function App() {
   const selectedFileIndex = allFiles.findIndex((file) => file.path === selectedFile);
   const labels = TEXT[language] || TEXT.en;
   const currentWavBadChannels = wavBadChannels[subBlockIndex] || [];
-  const currentArtifacts = artifactSegments[subBlockIndex] || [];
+  const currentArtifactStart = subBlockIndex * ARTIFACT_WINDOW_SECONDS;
+  const currentArtifactEnd = currentArtifactStart + ARTIFACT_WINDOW_SECONDS;
+  const currentArtifacts = artifactSegments.filter((item) => {
+    const start = Number(item.start_time);
+    const end = Number(item.end_time);
+    return Number.isFinite(start) && Number.isFinite(end) && start < currentArtifactEnd && end > currentArtifactStart;
+  });
   const selectedRelativePath = displayRelativePath(selectedFile);
 
   useEffect(() => {
@@ -310,7 +334,7 @@ function App() {
   const applyAnnotation = (annotation) => {
     setPsdBadChannels(annotation.psd_bad_channels || []);
     setWavBadChannels(annotation.wav_bad_channels || {});
-    setArtifactSegments(annotation.artifacts || {});
+    setArtifactSegments(normalizeArtifacts(annotation.artifacts));
     setIsDataDiscarded(Boolean(annotation.discarded));
   };
 
@@ -320,7 +344,7 @@ function App() {
       const annotation = {
         psd_bad_channels: res.data?.psd_bad_channels || [],
         wav_bad_channels: res.data?.wav_bad_channels || res.data?.subblock_bad_channels || {},
-        artifacts: res.data?.artifacts || {},
+        artifacts: normalizeArtifacts(res.data?.artifacts),
         discarded: Boolean(res.data?.discarded),
       };
       setFileAnnotationCache((prev) => ({ ...prev, [filePath]: annotation }));
@@ -347,7 +371,7 @@ function App() {
     setVisData({});
     setPsdBadChannels([]);
     setWavBadChannels({});
-    setArtifactSegments({});
+    setArtifactSegments([]);
     setIsDataDiscarded(false);
     setError(null);
   };
@@ -360,10 +384,7 @@ function App() {
   };
 
   const handleArtifactsChange = (newArtifacts) => {
-    setArtifactSegments((prev) => ({
-      ...prev,
-      [subBlockIndex]: newArtifacts,
-    }));
+    setArtifactSegments(newArtifacts);
   };
 
   const getSubBlocksWithBadChannels = () =>
@@ -513,7 +534,7 @@ function App() {
                   wavBadChannels={currentWavBadChannels}
                   setPsdBadChannels={setPsdBadChannels}
                   setWavBadChannels={handleWavBadChannelsChange}
-                  artifacts={currentArtifacts}
+                  artifacts={artifactSegments}
                   setArtifacts={handleArtifactsChange}
                   loading={loadingData}
                   onSelectSubBlock={setSubBlockIndex}
