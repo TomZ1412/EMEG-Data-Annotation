@@ -9,7 +9,7 @@ const API_BASE_URL = (import.meta.env.VITE_API_HOST || "localhost:10000")
 
 const apiUrl = (path) => `http://${API_BASE_URL}/api${path}`;
 
-const emptyAnnotation = { psd_bad_channels: [], wav_bad_channels: {}, discarded: false };
+const emptyAnnotation = { psd_bad_channels: [], wav_bad_channels: {}, artifacts: {}, discarded: false };
 
 const TEXT = {
   en: {
@@ -37,6 +37,7 @@ const TEXT = {
     psdBadChannels: "PSD bad channels",
     currentWavBadChannels: "Current waveform bad channels",
     markedSubBlocks: "Marked waveform sub-blocks",
+    artifactSegments: "Artifact segments",
     none: "None",
     submitAnnotation: "Submit annotation",
     submitting: "Submitting...",
@@ -112,6 +113,7 @@ function App() {
   const [visData, setVisData] = useState({});
   const [psdBadChannels, setPsdBadChannels] = useState([]);
   const [wavBadChannels, setWavBadChannels] = useState({});
+  const [artifactSegments, setArtifactSegments] = useState({});
   const [loadingTree, setLoadingTree] = useState(false);
   const [loadingData, setLoadingData] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -131,6 +133,7 @@ function App() {
   const selectedFileIndex = allFiles.findIndex((file) => file.path === selectedFile);
   const labels = TEXT[language] || TEXT.en;
   const currentWavBadChannels = wavBadChannels[subBlockIndex] || [];
+  const currentArtifacts = artifactSegments[subBlockIndex] || [];
   const selectedRelativePath = displayRelativePath(selectedFile);
 
   useEffect(() => {
@@ -307,6 +310,7 @@ function App() {
   const applyAnnotation = (annotation) => {
     setPsdBadChannels(annotation.psd_bad_channels || []);
     setWavBadChannels(annotation.wav_bad_channels || {});
+    setArtifactSegments(annotation.artifacts || {});
     setIsDataDiscarded(Boolean(annotation.discarded));
   };
 
@@ -316,6 +320,7 @@ function App() {
       const annotation = {
         psd_bad_channels: res.data?.psd_bad_channels || [],
         wav_bad_channels: res.data?.wav_bad_channels || res.data?.subblock_bad_channels || {},
+        artifacts: res.data?.artifacts || {},
         discarded: Boolean(res.data?.discarded),
       };
       setFileAnnotationCache((prev) => ({ ...prev, [filePath]: annotation }));
@@ -342,6 +347,7 @@ function App() {
     setVisData({});
     setPsdBadChannels([]);
     setWavBadChannels({});
+    setArtifactSegments({});
     setIsDataDiscarded(false);
     setError(null);
   };
@@ -350,6 +356,13 @@ function App() {
     setWavBadChannels((prev) => ({
       ...prev,
       [subBlockIndex]: newBadChannels,
+    }));
+  };
+
+  const handleArtifactsChange = (newArtifacts) => {
+    setArtifactSegments((prev) => ({
+      ...prev,
+      [subBlockIndex]: newArtifacts,
     }));
   };
 
@@ -373,12 +386,18 @@ function App() {
         psd_bad_channels: psdBadChannels,
         wav_bad_channels: wavBadChannels,
         subblock_bad_channels: wavBadChannels,
+        artifacts: artifactSegments,
         user: currentUser,
         discarded: isDataDiscarded,
         sub_block_index: subBlockIndex,
       };
       const response = await axios.post(apiUrl("/annotate"), payload);
-      const annotation = { psd_bad_channels: psdBadChannels, wav_bad_channels: wavBadChannels, discarded: isDataDiscarded };
+      const annotation = {
+        psd_bad_channels: psdBadChannels,
+        wav_bad_channels: wavBadChannels,
+        artifacts: artifactSegments,
+        discarded: isDataDiscarded,
+      };
 
       setFileAnnotationCache((prev) => ({ ...prev, [selectedFile]: annotation }));
       await endAnnotation(selectedFile);
@@ -429,6 +448,7 @@ function App() {
 
   return (
     <div style={styles.appShell}>
+      <style>{buttonStateStyles}</style>
       <header style={styles.header}>
         <div>
           <h1 style={styles.title}>{labels.title}</h1>
@@ -493,6 +513,8 @@ function App() {
                   wavBadChannels={currentWavBadChannels}
                   setPsdBadChannels={setPsdBadChannels}
                   setWavBadChannels={handleWavBadChannelsChange}
+                  artifacts={currentArtifacts}
+                  setArtifacts={handleArtifactsChange}
                   loading={loadingData}
                   onSelectSubBlock={setSubBlockIndex}
                   currentSubBlockIndex={subBlockIndex}
@@ -539,6 +561,17 @@ function App() {
                   <div style={styles.badChannelBox}>
                     {getSubBlocksWithBadChannels().length
                       ? getSubBlocksWithBadChannels().map((index) => index + 1).join(", ")
+                      : labels.none}
+                  </div>
+                </div>
+
+                <div style={styles.panelBlock}>
+                  <div style={styles.panelLabel}>{labels.artifactSegments || "Artifact segments"}</div>
+                  <div style={styles.badChannelBox}>
+                    {currentArtifacts.length
+                      ? currentArtifacts
+                          .map((item) => `${item.channel}: ${Number(item.start_time).toFixed(2)}-${Number(item.end_time).toFixed(2)}s`)
+                          .join(", ")
                       : labels.none}
                   </div>
                 </div>
@@ -631,11 +664,17 @@ const styles = {
   workbench: {
     flex: "1 1 auto",
     minHeight: 0,
-    display: "grid",
-    gridTemplateColumns: "minmax(0, 1fr) minmax(170px, 220px)",
+    minWidth: 0,
+    display: "flex",
     gap: 12,
+    overflow: "hidden",
+    isolation: "isolate",
   },
   viewerPanel: {
+    position: "relative",
+    zIndex: 1,
+    contain: "layout paint",
+    flex: "1 1 auto",
     minWidth: 0,
     minHeight: 0,
     display: "flex",
@@ -675,7 +714,14 @@ const styles = {
     fontFamily: "Consolas, Monaco, monospace",
   },
   annotationPanel: {
-    minWidth: 0,
+    position: "relative",
+    zIndex: 2000,
+    isolation: "isolate",
+    pointerEvents: "auto",
+    flex: "0 0 220px",
+    width: 220,
+    minWidth: 220,
+    maxWidth: 220,
     display: "flex",
     flexDirection: "column",
     gap: 10,
@@ -718,6 +764,9 @@ const styles = {
     wordBreak: "break-word",
   },
   primaryButton: {
+    position: "relative",
+    zIndex: 2001,
+    pointerEvents: "auto",
     width: "100%",
     padding: "10px 12px",
     border: "none",
@@ -763,5 +812,25 @@ const styles = {
     background: "#ffffff",
   },
 };
+
+const buttonStateStyles = `
+  button:not(:disabled) {
+    transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease, box-shadow 140ms ease, transform 100ms ease;
+  }
+
+  button:not(:disabled):hover {
+    filter: brightness(0.96);
+    box-shadow: 0 2px 8px rgba(15, 23, 42, 0.16);
+  }
+
+  button:not(:disabled):active {
+    box-shadow: 0 1px 3px rgba(15, 23, 42, 0.18);
+  }
+
+  button:disabled {
+    cursor: not-allowed !important;
+    opacity: 0.55;
+  }
+`;
 
 export default App;

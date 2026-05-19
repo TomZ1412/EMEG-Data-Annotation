@@ -35,6 +35,8 @@ const TEXT = {
     noWaveformData: "No waveform data",
     noPsdData: "No PSD data",
     loading: "Loading...",
+    artifactPending: (channel, time) => `Artifact start: ${channel} @ ${time.toFixed(2)}s`,
+    artifactHelp: "Right-click twice on the same waveform channel to mark an artifact interval.",
     goToSubBlock: (index) => `Go to sub-block ${index + 1}`,
   },
   zh: {
@@ -56,8 +58,10 @@ export default function WaveformViewer({
   data,
   psdBadChannels = [],
   wavBadChannels = [],
+  artifacts = [],
   setPsdBadChannels,
   setWavBadChannels,
+  setArtifacts,
   loading,
   onSelectSubBlock,
   currentSubBlockIndex = 0,
@@ -73,6 +77,7 @@ export default function WaveformViewer({
   const [activeView, setActiveView] = useState("psd");
   const [scalingFactor, setScalingFactor] = useState(8000);
   const [hoveredChannel, setHoveredChannel] = useState(null);
+  const [pendingArtifact, setPendingArtifact] = useState(null);
 
   const totalSubBlocks = Math.max(1, Number(data?.totalSubBlocks || 1));
   const wavData = data?.wav || {};
@@ -86,6 +91,10 @@ export default function WaveformViewer({
   useEffect(() => {
     badChannelsRef.current = activeBadChannels;
   }, [activeBadChannels]);
+
+  useEffect(() => {
+    setPendingArtifact(null);
+  }, [currentSubBlockIndex, activeView]);
 
   const channelNames = useMemo(() => {
     if (activeView === "psd") return Object.keys(psdSeries);
@@ -221,6 +230,65 @@ export default function WaveformViewer({
     };
   };
 
+  const normalizeArtifactTime = (time) => Math.max(0, Math.min(30, Number(time) || 0));
+
+  const artifactShapes = (channels, offset) =>
+    artifacts
+      .filter((item) => item?.channel && Number.isFinite(Number(item.start_time)) && Number.isFinite(Number(item.end_time)))
+      .map((item) => {
+        const index = channels.indexOf(item.channel);
+        if (index < 0) return null;
+        const center = (channels.length - index - 1) * offset;
+        return {
+          type: "rect",
+          xref: "x",
+          yref: "y",
+          x0: normalizeArtifactTime(item.start_time),
+          x1: normalizeArtifactTime(item.end_time),
+          y0: center - offset * 0.38,
+          y1: center + offset * 0.38,
+          fillcolor: "rgba(245, 158, 11, 0.18)",
+          line: { color: "rgba(245, 158, 11, 0.7)", width: 1 },
+          layer: "below",
+        };
+      })
+      .filter(Boolean);
+
+  const pointFromContextMenu = (event, plotDiv, channels, offset) => {
+    const layout = plotDiv?._fullLayout;
+    const xaxis = layout?.xaxis;
+    const yaxis = layout?.yaxis;
+    if (!xaxis?.p2d || !yaxis?.p2d || !layout?._size) return null;
+
+    const rect = plotDiv.getBoundingClientRect();
+    const xPixel = event.clientX - rect.left - layout._size.l;
+    const yPixel = event.clientY - rect.top - layout._size.t;
+    const time = normalizeArtifactTime(xaxis.p2d(xPixel));
+    const yValue = yaxis.p2d(yPixel);
+    const channelIndex = channels.length - 1 - Math.round(yValue / offset);
+    if (channelIndex < 0 || channelIndex >= channels.length) return null;
+    return { channel: channels[channelIndex], time };
+  };
+
+  const handleArtifactContextMenu = (event, plotDiv, channels, offset) => {
+    if (!setArtifacts) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const point = pointFromContextMenu(event, plotDiv, channels, offset);
+    if (!point) return;
+
+    if (!pendingArtifact || pendingArtifact.channel !== point.channel) {
+      setPendingArtifact(point);
+      return;
+    }
+
+    const start = Math.min(pendingArtifact.time, point.time);
+    const end = Math.max(pendingArtifact.time, point.time);
+    if (Math.abs(end - start) < 0.01) return;
+    setArtifacts([...artifacts, { channel: point.channel, start_time: start, end_time: end }]);
+    setPendingArtifact(null);
+  };
+
   useEffect(() => {
     if (activeView !== "wav") return;
     const container = waveformRef.current;
@@ -272,6 +340,21 @@ export default function WaveformViewer({
         xanchor: "right",
         align: "right",
       }));
+      const shapes = artifactShapes(channels, offset);
+      if (pendingArtifact && channels.includes(pendingArtifact.channel)) {
+        const index = channels.indexOf(pendingArtifact.channel);
+        const center = (channels.length - index - 1) * offset;
+        shapes.push({
+          type: "line",
+          xref: "x",
+          yref: "y",
+          x0: pendingArtifact.time,
+          x1: pendingArtifact.time,
+          y0: center - offset * 0.45,
+          y1: center + offset * 0.45,
+          line: { color: "#f59e0b", width: 2, dash: "dot" },
+        });
+      }
 
       const plotDiv = document.createElement("div");
       plotDiv.style.width = "100%";
@@ -295,6 +378,7 @@ export default function WaveformViewer({
           plot_bgcolor: "#fff",
           showlegend: false,
           annotations,
+          shapes,
           autosize: true,
         },
         { displayModeBar: false, responsive: true }
@@ -307,6 +391,7 @@ export default function WaveformViewer({
       });
       plotDiv.on("plotly_hover", (event) => setHoveredChannel(event.points?.[0]?.data?.name || null));
       plotDiv.on("plotly_unhover", () => setHoveredChannel(null));
+      plotDiv.addEventListener("contextmenu", (event) => handleArtifactContextMenu(event, plotDiv, channels, offset));
       container.scrollTop = scrollTopRef.current;
     };
 
@@ -314,7 +399,7 @@ export default function WaveformViewer({
     return () => {
       cancelled = true;
     };
-  }, [activeView, wavData, wavBadChannels, scalingFactor]);
+  }, [activeView, wavData, wavBadChannels, artifacts, pendingArtifact, scalingFactor]);
 
   useEffect(() => {
     if (activeView !== "wav" || !activePlotRef.current || !Object.keys(wavData).length) return;
@@ -489,6 +574,14 @@ export default function WaveformViewer({
         />
       )}
 
+      {activeView === "wav" && (
+        <div style={styles.artifactHint}>
+          {pendingArtifact
+            ? (labels.artifactPending || TEXT.en.artifactPending)(pendingArtifact.channel, pendingArtifact.time)
+            : (labels.artifactHelp || TEXT.en.artifactHelp)}
+        </div>
+      )}
+
       <div style={styles.plotFrame}>
         <div style={styles.plotArea}>
           {loading && <LoadingOverlay text={labels.loading} />}
@@ -623,9 +716,12 @@ const styles = {
   shell: {
     height: "100%",
     minHeight: 0,
+    minWidth: 0,
     display: "flex",
     flexDirection: "column",
     gap: 8,
+    overflow: "hidden",
+    contain: "layout paint",
   },
   topbar: {
     display: "flex",
@@ -681,28 +777,43 @@ const styles = {
     overflowX: "auto",
     paddingBottom: 1,
   },
+  artifactHint: {
+    padding: "6px 10px",
+    border: "1px solid #fde68a",
+    background: "#fffbeb",
+    color: "#92400e",
+    fontSize: 12,
+  },
   plotFrame: {
     flex: 1,
     minHeight: 0,
+    minWidth: 0,
     display: "flex",
     border: "1px solid #d1d5db",
     background: "#fff",
+    overflow: "hidden",
+    contain: "layout paint",
   },
   plotArea: {
     flex: 1,
     minWidth: 0,
     position: "relative",
+    overflow: "hidden",
+    contain: "layout paint",
   },
   waveformPlot: {
     width: "100%",
     height: "100%",
     overflowY: "auto",
     overflowX: "hidden",
+    contain: "layout paint",
   },
   psdPlot: {
     width: "100%",
     height: "100%",
     minHeight: 420,
+    overflow: "hidden",
+    contain: "layout paint",
   },
   channelList: {
     width: 190,

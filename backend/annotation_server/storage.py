@@ -63,11 +63,46 @@ def _as_subblock_channels(value: Any) -> dict:
     return {}
 
 
+def _as_artifact_list(value: Any) -> list:
+    if not isinstance(value, list):
+        return []
+
+    artifacts = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        channel = item.get("channel")
+        start_time = item.get("start_time")
+        end_time = item.get("end_time")
+        if not channel:
+            continue
+        try:
+            start = float(start_time)
+            end = float(end_time)
+        except (TypeError, ValueError):
+            continue
+        artifacts.append({
+            "channel": str(channel),
+            "start_time": min(start, end),
+            "end_time": max(start, end),
+        })
+    return artifacts
+
+
+def _as_subblock_artifacts(value: Any) -> dict:
+    if isinstance(value, dict):
+        return {str(key): _as_artifact_list(artifacts) for key, artifacts in value.items()}
+    if isinstance(value, list):
+        return {"0": _as_artifact_list(value)}
+    return {}
+
+
 def normalize_annotation(record: dict) -> dict:
     legacy_bad_channels = record.get("bad_channels", [])
     legacy_subblock_bad_channels = record.get("subblock_bad_channels")
     psd_bad_channels = record.get("psd_bad_channels")
     wav_bad_channels = record.get("wav_bad_channels")
+    artifacts = record.get("artifacts")
 
     if psd_bad_channels is None:
         psd_bad_channels = legacy_bad_channels if isinstance(legacy_bad_channels, list) else []
@@ -81,6 +116,7 @@ def normalize_annotation(record: dict) -> dict:
         "psd_bad_channels": _as_channel_list(psd_bad_channels),
         "wav_bad_channels": _as_subblock_channels(wav_bad_channels),
         "subblock_bad_channels": _as_subblock_channels(wav_bad_channels),
+        "artifacts": _as_subblock_artifacts(artifacts),
         "discarded": bool(record.get("discarded", False)),
         "user": record.get("user", ""),
     }
@@ -108,6 +144,7 @@ def get_annotation_for_file(annotation_file: Path, file_path: str) -> dict:
             "psd_bad_channels": [],
             "wav_bad_channels": {},
             "subblock_bad_channels": {},
+            "artifacts": {},
             "discarded": False,
         }
 
@@ -130,6 +167,7 @@ def get_annotation_for_file(annotation_file: Path, file_path: str) -> dict:
         "psd_bad_channels": _as_channel_list(psd_bad_channels),
         "wav_bad_channels": wav_bad_channels,
         "subblock_bad_channels": wav_bad_channels,
+        "artifacts": _as_subblock_artifacts(annotation.get("artifacts")),
         "discarded": bool(annotation.get("discarded", False)),
     }
 
