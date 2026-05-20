@@ -14,6 +14,7 @@ from .services import (
     next_available_file,
 )
 from .storage import (
+    find_annotation,
     get_annotation_for_file,
     list_data_files,
     load_annotations,
@@ -58,7 +59,7 @@ def create_app(profile_name: str | None = None, profile: DataProfile | None = No
 
         def add_status(node: dict) -> None:
             if node["type"] == "file":
-                node["is_annotated"] = node["path"] in annotations
+                node["is_annotated"] = bool(find_annotation(annotations, node["path"]))
                 active = locks.active.get(node["path"])
                 node["is_active"] = bool(active)
                 node["active_user"] = active["user"] if active else None

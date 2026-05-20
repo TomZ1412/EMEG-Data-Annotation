@@ -4,7 +4,7 @@ import time
 from pathlib import Path
 
 from .config import DataProfile
-from .storage import load_annotations, load_visualization, resolve_visualization_file
+from .storage import find_annotation, load_annotations, load_visualization, resolve_visualization_file
 
 
 class AnnotationLocks:
@@ -147,7 +147,7 @@ def next_available_file(
 
     for offset in range(1, len(files) + 1):
         file_path = files[(current_index + offset) % len(files)]
-        if file_path in annotations:
+        if find_annotation(annotations, file_path):
             continue
         if locks.is_occupied_by_other(file_path, user):
             continue

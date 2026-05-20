@@ -217,12 +217,7 @@ function App() {
       activeFileRef.current = selectedFile;
       startKeepAlive(selectedFile);
 
-      const cachedAnnotation = fileAnnotationCache[selectedFile];
-      if (cachedAnnotation) {
-        applyAnnotation(cachedAnnotation);
-      } else {
-        await fetchAnnotationData(selectedFile);
-      }
+      await fetchAnnotationData(selectedFile);
 
       if (!cancelled) {
         fetchVisualizationData(selectedFile, subBlockIndex);
@@ -359,7 +354,13 @@ function App() {
   };
 
   const handleFileSelect = async (filePath) => {
-    if (!filePath || filePath === selectedFile) return;
+    if (!filePath) return;
+    if (filePath === selectedFile) {
+      visualizationCacheRef.current.delete(`${filePath}::${subBlockIndex}`);
+      await fetchAnnotationData(filePath);
+      fetchVisualizationData(filePath, subBlockIndex, true);
+      return;
+    }
 
     const previousFile = activeFileRef.current;
     activeFileRef.current = null;

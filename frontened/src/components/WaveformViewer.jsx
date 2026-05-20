@@ -124,6 +124,15 @@ export default function WaveformViewer({
     }
   }, [activeView, wavData, psdSeries]);
 
+  const badChannelMatches = (item, channel, index) => {
+    if (item === channel || String(item) === channel) return true;
+    const numericItem = Number(item);
+    return Number.isInteger(numericItem) && numericItem === index;
+  };
+
+  const isBadChannel = (badChannels, channel, index) =>
+    badChannels.some((item) => badChannelMatches(item, channel, index));
+
   useEffect(() => {
     return () => {
       if (activePlotRef.current) Plotly.purge(activePlotRef.current);
@@ -133,9 +142,11 @@ export default function WaveformViewer({
   const toggleChannel = (channel) => {
     if (!channel || !setActiveBadChannels) return;
     const currentBadChannels = badChannelsRef.current;
+    const index = channelNames.indexOf(channel);
+    const alreadyBad = currentBadChannels.some((item) => badChannelMatches(item, channel, index));
     setActiveBadChannels(
-      currentBadChannels.includes(channel)
-        ? currentBadChannels.filter((item) => item !== channel)
+      alreadyBad
+        ? currentBadChannels.filter((item) => !badChannelMatches(item, channel, index))
         : [...currentBadChannels, channel]
     );
   };
@@ -144,9 +155,15 @@ export default function WaveformViewer({
     if (!channels.length || !setActiveBadChannels) return;
     const currentBadChannels = badChannelsRef.current;
     const uniqueChannels = [...new Set(channels)];
-    const shouldClear = uniqueChannels.every((channel) => currentBadChannels.includes(channel));
+    const shouldClear = uniqueChannels.every((channel) =>
+      currentBadChannels.some((item) => badChannelMatches(item, channel, channelNames.indexOf(channel)))
+    );
     if (shouldClear) {
-      setActiveBadChannels(currentBadChannels.filter((channel) => !uniqueChannels.includes(channel)));
+      setActiveBadChannels(
+        currentBadChannels.filter(
+          (item) => !uniqueChannels.some((channel) => badChannelMatches(item, channel, channelNames.indexOf(channel)))
+        )
+      );
     } else {
       setActiveBadChannels([...new Set([...currentBadChannels, ...uniqueChannels])]);
     }
@@ -205,31 +222,31 @@ export default function WaveformViewer({
     const currentBadChannels = badChannelsRef.current;
     return {
       colors: channels.map((channel, index) =>
-        currentBadChannels.includes(channel)
+        isBadChannel(currentBadChannels, channel, index)
           ? BAD_COLOR
           : hoveredChannel === channel
             ? HOVER_COLOR
             : CHANNEL_COLORS[index % CHANNEL_COLORS.length] || GOOD_COLOR
       ),
-      widths: channels.map((channel) => (currentBadChannels.includes(channel) || hoveredChannel === channel ? 2.4 : 1)),
-      opacities: channels.map((channel) => (currentBadChannels.includes(channel) || hoveredChannel === channel ? 1 : 0.58)),
+      widths: channels.map((channel, index) => (isBadChannel(currentBadChannels, channel, index) || hoveredChannel === channel ? 2.4 : 1)),
+      opacities: channels.map((channel, index) => (isBadChannel(currentBadChannels, channel, index) || hoveredChannel === channel ? 1 : 0.58)),
     };
   };
 
   const wavTraceStyle = (channels) => {
     const currentBadChannels = badChannelsRef.current;
     return {
-      colors: channels.map((channel) =>
-        currentBadChannels.includes(channel) ? BAD_COLOR : hoveredChannel === channel ? HOVER_COLOR : GOOD_COLOR
+      colors: channels.map((channel, index) =>
+        isBadChannel(currentBadChannels, channel, index) ? BAD_COLOR : hoveredChannel === channel ? HOVER_COLOR : GOOD_COLOR
       ),
-      widths: channels.map((channel) => (currentBadChannels.includes(channel) || hoveredChannel === channel ? 2.4 : 1)),
-      opacities: channels.map((channel) => (currentBadChannels.includes(channel) || hoveredChannel === channel ? 1 : 0.88)),
+      widths: channels.map((channel, index) => (isBadChannel(currentBadChannels, channel, index) || hoveredChannel === channel ? 2.4 : 1)),
+      opacities: channels.map((channel, index) => (isBadChannel(currentBadChannels, channel, index) || hoveredChannel === channel ? 1 : 0.88)),
     };
   };
 
   const channelLine = (channel, index = 0, colorful = false) => {
     const currentBadChannels = activeView === "psd" ? psdBadChannels : wavBadChannels;
-    const isBad = currentBadChannels.includes(channel);
+    const isBad = isBadChannel(currentBadChannels, channel, index);
     const isHovered = hoveredChannel === channel;
     return {
       color: isBad
@@ -345,7 +362,7 @@ export default function WaveformViewer({
           mode: "lines",
           line,
           hoverinfo: "x+y+name",
-          opacity: wavBadChannels.includes(channel) ? 1 : 0.88,
+          opacity: isBadChannel(wavBadChannels, channel, index) ? 1 : 0.88,
         };
       });
 
@@ -358,7 +375,7 @@ export default function WaveformViewer({
         showarrow: false,
         font: {
           size: 10,
-          color: wavBadChannels.includes(channel) ? BAD_COLOR : "#111827",
+          color: isBadChannel(wavBadChannels, channel, index) ? BAD_COLOR : "#111827",
         },
         xanchor: "right",
         align: "right",
@@ -629,6 +646,7 @@ export default function WaveformViewer({
             hoveredChannel={hoveredChannel}
             onHover={setHoveredChannel}
             onToggle={toggleChannel}
+            isBadChannel={isBadChannel}
           />
         )}
       </div>
@@ -670,11 +688,11 @@ export default function WaveformViewer({
   );
 }
 
-function ChannelList({ channels, badChannels, hoveredChannel, onHover, onToggle }) {
+function ChannelList({ channels, badChannels, hoveredChannel, onHover, onToggle, isBadChannel }) {
   return (
     <div style={styles.channelList}>
       {channels.map((channel, index) => {
-        const isBad = badChannels.includes(channel);
+        const isBad = isBadChannel(badChannels, channel, index);
         const isHovered = hoveredChannel === channel;
         return (
           <button

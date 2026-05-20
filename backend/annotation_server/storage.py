@@ -49,7 +49,78 @@ def load_annotations(annotation_file: Path, file_path: str | None = None) -> dic
     except (OSError, json.JSONDecodeError) as exc:
         print(f"Failed to load annotations {annotation_file}: {exc}")
 
-    return annotations if file_path is None else annotations.get(file_path, {})
+    return annotations if file_path is None else find_annotation(annotations, file_path)
+
+
+def normalize_path_key(path: str | Path | None) -> str:
+    if path is None:
+        return ""
+    normalized = str(path).replace("\\", "/").strip()
+    while "//" in normalized:
+        normalized = normalized.replace("//", "/")
+    return normalized
+
+
+def logical_annotation_key(path: str | Path | None) -> str:
+    normalized = normalize_path_key(path)
+    if not normalized:
+        return ""
+
+    path_obj = Path(normalized)
+    stem = path_obj.stem
+    suffix = path_obj.suffix.lower()
+
+    if "_wav_" in stem:
+        base, block = stem.rsplit("_wav_", 1)
+        if block.isdigit():
+            stem = base
+    elif stem.endswith("_psd"):
+        stem = stem[:-4]
+
+    if suffix in PROCESSED_SUFFIXES:
+        suffix = ".json"
+
+    logical = str(path_obj.with_name(f"{stem}{suffix}")).replace("\\", "/")
+    while "//" in logical:
+        logical = logical.replace("//", "/")
+    return logical
+
+
+def annotation_key_variants(path: str | Path | None) -> set[str]:
+    normalized = normalize_path_key(path)
+    logical = logical_annotation_key(normalized)
+    variants = {value for value in (normalized, logical) if value}
+
+    for value in list(variants):
+        variants.add(value.lstrip("/"))
+        variants.add(f"/{value.lstrip('/')}")
+        path_obj = Path(value)
+        if path_obj.suffix.lower() == ".json":
+            variants.add(str(path_obj.with_suffix(".npz")).replace("\\", "/"))
+        elif path_obj.suffix.lower() == ".npz":
+            variants.add(str(path_obj.with_suffix(".json")).replace("\\", "/"))
+
+    return {normalize_path_key(value) for value in variants if value}
+
+
+def find_annotation(annotations: dict, file_path: str | Path) -> dict:
+    if file_path in annotations:
+        return annotations[file_path]
+
+    variants = annotation_key_variants(file_path)
+    for key in variants:
+        if key in annotations:
+            return annotations[key]
+
+    target_logical = logical_annotation_key(file_path).lstrip("/")
+    if not target_logical:
+        return {}
+
+    for key, annotation in annotations.items():
+        if logical_annotation_key(key).lstrip("/") == target_logical:
+            return annotation
+
+    return {}
 
 
 def _as_channel_list(value: Any) -> list:
