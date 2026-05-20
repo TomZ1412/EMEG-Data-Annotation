@@ -296,6 +296,8 @@ def list_files_recursive(
             continue
         if any(token in item.name for token in profile.skip_dirs):
             continue
+        if is_root_call and profile.dataset_filters and item.is_dir() and item.name not in profile.dataset_filters:
+            continue
 
         if item.is_dir():
             if item.name.endswith(".ds"):
@@ -368,6 +370,8 @@ def list_processed_files_recursive(
         if item.name in profile.skip_exact_dirs:
             continue
         if any(token in item.name for token in profile.skip_dirs):
+            continue
+        if is_root_call and profile.dataset_filters and item.is_dir() and item.name not in profile.dataset_filters:
             continue
 
         if item.is_dir():

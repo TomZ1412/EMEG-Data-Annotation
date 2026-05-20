@@ -10,6 +10,7 @@ const TEXT = {
     annotated: "Annotated",
     unannotated: "Unannotated",
     busyBy: (user) => `Being annotated by ${user || "another user"}`,
+    annotatedLocked: "Already annotated",
     fileFilter: "File filter",
     total: "Total",
     busy: "Busy",
@@ -24,6 +25,7 @@ const TEXT = {
     annotated: "已标注",
     unannotated: "未标注",
     busyBy: (user) => `正在被 ${user || "其他用户"} 标注`,
+    annotatedLocked: "已标注，当前不可打开",
     fileFilter: "文件筛选",
     total: "总计",
     busy: "占用",
@@ -100,8 +102,11 @@ const Node = memo(function Node({ node, onSelect, currentUser, labels }) {
   const isActive = Boolean(node.is_active);
   const activeUser = node.active_user;
   const isOwnedByCurrentUser = isActive && activeUser === currentUser;
-  const isClickable = !isActive || isOwnedByCurrentUser;
-  const title = isAnnotated
+  const canOpen = node.can_open !== false;
+  const isClickable = canOpen && (!isActive || isOwnedByCurrentUser);
+  const title = !canOpen
+    ? labels.annotatedLocked
+    : isAnnotated
     ? labels.annotated
     : isActive
       ? labels.busyBy(activeUser)

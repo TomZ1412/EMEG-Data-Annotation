@@ -20,8 +20,11 @@ class DataProfile:
     channel_filters: tuple[str, ...] = DEFAULT_CHANNEL_FILTERS
     skip_dirs: tuple[str, ...] = ("code", "stimuli", "derivatives")
     skip_exact_dirs: tuple[str, ...] = field(default_factory=tuple)
+    dataset_filters: tuple[str, ...] = field(default_factory=tuple)
     root_numeric_range: tuple[int, int] | None = None
     data_source: str = "processed"
+    allow_open_annotated: bool = True
+    show_existing_annotations: bool = True
 
 
 PROFILES = {
@@ -55,6 +58,20 @@ def _path_from_env(name: str, fallback: Path) -> Path:
     return Path(os.getenv(name, str(fallback)))
 
 
+def _bool_from_env(name: str, fallback: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return fallback
+    return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _csv_from_env(name: str, fallback: tuple[str, ...] = ()) -> tuple[str, ...]:
+    value = os.getenv(name)
+    if value is None:
+        return fallback
+    return tuple(item.strip() for item in value.split(",") if item.strip())
+
+
 def load_profile(profile_name: str | None = None) -> DataProfile:
     name = profile_name or os.getenv("ANNO_PROFILE", "not_used")
     base = PROFILES.get(name)
@@ -75,6 +92,9 @@ def load_profile(profile_name: str | None = None) -> DataProfile:
         channel_filters=tuple(s.strip() for s in channel_filters.split(",")) if channel_filters else base.channel_filters,
         skip_dirs=base.skip_dirs,
         skip_exact_dirs=base.skip_exact_dirs,
+        dataset_filters=_csv_from_env("ANNO_DATASETS", base.dataset_filters),
         root_numeric_range=base.root_numeric_range,
         data_source=os.getenv("ANNO_DATA_SOURCE", base.data_source).strip().lower(),
+        allow_open_annotated=_bool_from_env("ANNO_ALLOW_OPEN_ANNOTATED", base.allow_open_annotated),
+        show_existing_annotations=_bool_from_env("ANNO_SHOW_EXISTING_ANNOTATIONS", base.show_existing_annotations),
     )

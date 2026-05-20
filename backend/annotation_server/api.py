@@ -43,6 +43,9 @@ def create_app(profile_name: str | None = None, profile: DataProfile | None = No
             "raw_data_root": str(settings.raw_data_root),
             "vis_data_root": str(settings.vis_data_root),
             "annotation_file": str(settings.annotation_file),
+            "dataset_filters": list(settings.dataset_filters),
+            "allow_open_annotated": settings.allow_open_annotated,
+            "show_existing_annotations": settings.show_existing_annotations,
         }
 
     @app.get("/serve_image")
@@ -59,7 +62,9 @@ def create_app(profile_name: str | None = None, profile: DataProfile | None = No
 
         def add_status(node: dict) -> None:
             if node["type"] == "file":
-                node["is_annotated"] = bool(find_annotation(annotations, node["path"]))
+                is_annotated = bool(find_annotation(annotations, node["path"]))
+                node["is_annotated"] = is_annotated
+                node["can_open"] = settings.allow_open_annotated or not is_annotated
                 active = locks.active.get(node["path"])
                 node["is_active"] = bool(active)
                 node["active_user"] = active["user"] if active else None
@@ -90,6 +95,15 @@ def create_app(profile_name: str | None = None, profile: DataProfile | None = No
 
     @app.get("/api/annotation/{file_path:path}")
     def get_annotation(file_path: str):
+        if not settings.show_existing_annotations:
+            return JSONResponse({
+                "bad_channels": [],
+                "psd_bad_channels": [],
+                "wav_bad_channels": {},
+                "subblock_bad_channels": {},
+                "artifacts": [],
+                "discarded": False,
+            })
         return JSONResponse(get_annotation_for_file(settings.annotation_file, file_path))
 
     @app.post("/api/annotate")
@@ -120,6 +134,9 @@ def create_app(profile_name: str | None = None, profile: DataProfile | None = No
         user = data.get("user")
         if not file_path or not user:
             raise HTTPException(status_code=400, detail="file_path and user are required")
+        annotations = load_annotations(settings.annotation_file)
+        if not settings.allow_open_annotated and find_annotation(annotations, file_path):
+            raise HTTPException(status_code=409, detail="This file has already been annotated")
         if not locks.acquire(file_path, user):
             active_user = locks.active[file_path]["user"]
             raise HTTPException(status_code=409, detail=f"File is being annotated by {active_user}")
