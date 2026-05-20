@@ -218,14 +218,11 @@ def write_annotation(annotation_file: Path, record: dict) -> None:
     if not record.get("file_path"):
         raise ValueError("file_path is required")
 
-    annotations = load_annotations(annotation_file)
     annotation = normalize_annotation(record)
-    annotations[annotation["file_path"]] = annotation
 
     annotation_file.parent.mkdir(parents=True, exist_ok=True)
-    with annotation_file.open("w", encoding="utf-8") as handle:
-        for item in annotations.values():
-            handle.write(json.dumps(item, ensure_ascii=False) + "\n")
+    with annotation_file.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(annotation, ensure_ascii=False) + "\n")
 
 
 def get_annotation_for_file(annotation_file: Path, file_path: str) -> dict:
