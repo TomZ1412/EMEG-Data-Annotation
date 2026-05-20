@@ -242,7 +242,9 @@ function App() {
     if (!currentUser) return;
     setLoadingTree(true);
     try {
-      const res = await axios.get(apiUrl("/file_tree"), { params: refresh ? { refresh: true } : {} });
+      const res = await axios.get(apiUrl("/file_tree"), {
+        params: { user: currentUser, ...(refresh ? { refresh: true } : {}) },
+      });
       setFileTree(res.data);
       setError(null);
     } catch (err) {
@@ -335,7 +337,9 @@ function App() {
 
   const fetchAnnotationData = async (filePath) => {
     try {
-      const res = await axios.get(apiUrl(`/annotation/${filePath}`));
+      const res = await axios.get(apiUrl(`/annotation/${filePath}`), {
+        params: { user: currentUser },
+      });
       const annotation = {
         psd_bad_channels: res.data?.psd_bad_channels || [],
         wav_bad_channels: res.data?.wav_bad_channels || res.data?.subblock_bad_channels || {},

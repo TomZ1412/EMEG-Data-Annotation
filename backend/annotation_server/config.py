@@ -25,6 +25,7 @@ class DataProfile:
     data_source: str = "processed"
     allow_open_annotated: bool = True
     show_existing_annotations: bool = True
+    annotation_scope: str = "shared"
 
 
 PROFILES = {
@@ -97,4 +98,5 @@ def load_profile(profile_name: str | None = None) -> DataProfile:
         data_source=os.getenv("ANNO_DATA_SOURCE", base.data_source).strip().lower(),
         allow_open_annotated=_bool_from_env("ANNO_ALLOW_OPEN_ANNOTATED", base.allow_open_annotated),
         show_existing_annotations=_bool_from_env("ANNO_SHOW_EXISTING_ANNOTATIONS", base.show_existing_annotations),
+        annotation_scope=os.getenv("ANNO_ANNOTATION_SCOPE", base.annotation_scope).strip().lower(),
     )

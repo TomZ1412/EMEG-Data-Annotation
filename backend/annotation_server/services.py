@@ -134,8 +134,10 @@ def next_available_file(
     locks: AnnotationLocks,
     user: str,
     current_file: str | None,
+    annotation_scope: str = "shared",
 ) -> str | None:
-    annotations = load_annotations(annotation_file)
+    annotation_user = user if annotation_scope == "user" else None
+    annotations = load_annotations(annotation_file, user=annotation_user, scope=annotation_scope)
     files = flatten_files(tree)
     if not files:
         return None
@@ -147,7 +149,7 @@ def next_available_file(
 
     for offset in range(1, len(files) + 1):
         file_path = files[(current_index + offset) % len(files)]
-        if find_annotation(annotations, file_path):
+        if find_annotation(annotations, file_path, annotation_user, annotation_scope):
             continue
         if locks.is_occupied_by_other(file_path, user):
             continue

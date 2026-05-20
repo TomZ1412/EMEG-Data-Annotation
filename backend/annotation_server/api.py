@@ -46,6 +46,7 @@ def create_app(profile_name: str | None = None, profile: DataProfile | None = No
             "dataset_filters": list(settings.dataset_filters),
             "allow_open_annotated": settings.allow_open_annotated,
             "show_existing_annotations": settings.show_existing_annotations,
+            "annotation_scope": settings.annotation_scope,
         }
 
     @app.get("/serve_image")
@@ -56,13 +57,18 @@ def create_app(profile_name: str | None = None, profile: DataProfile | None = No
         return FileResponse(path)
 
     @app.get("/api/file_tree")
-    def get_file_tree(refresh: bool = Query(False)):
+    def get_file_tree(refresh: bool = Query(False), user: Optional[str] = Query(None)):
         tree = list_data_files(settings, use_cache=not refresh)
-        annotations = load_annotations(settings.annotation_file)
+        annotation_user = user if settings.annotation_scope == "user" else None
+        annotations = load_annotations(
+            settings.annotation_file,
+            user=annotation_user,
+            scope=settings.annotation_scope,
+        )
 
         def add_status(node: dict) -> None:
             if node["type"] == "file":
-                is_annotated = bool(find_annotation(annotations, node["path"]))
+                is_annotated = bool(find_annotation(annotations, node["path"], annotation_user, settings.annotation_scope))
                 node["is_annotated"] = is_annotated
                 node["can_open"] = settings.allow_open_annotated or not is_annotated
                 active = locks.active.get(node["path"])
@@ -94,7 +100,7 @@ def create_app(profile_name: str | None = None, profile: DataProfile | None = No
         ))
 
     @app.get("/api/annotation/{file_path:path}")
-    def get_annotation(file_path: str):
+    def get_annotation(file_path: str, user: Optional[str] = Query(None)):
         if not settings.show_existing_annotations:
             return JSONResponse({
                 "bad_channels": [],
@@ -104,7 +110,13 @@ def create_app(profile_name: str | None = None, profile: DataProfile | None = No
                 "artifacts": [],
                 "discarded": False,
             })
-        return JSONResponse(get_annotation_for_file(settings.annotation_file, file_path))
+        annotation_user = user if settings.annotation_scope == "user" else None
+        return JSONResponse(get_annotation_for_file(
+            settings.annotation_file,
+            file_path,
+            user=annotation_user,
+            scope=settings.annotation_scope,
+        ))
 
     @app.post("/api/annotate")
     def annotate(record: dict):
@@ -123,7 +135,7 @@ def create_app(profile_name: str | None = None, profile: DataProfile | None = No
     def get_next_unannotated(user: str = Query(...), current_file: Optional[str] = Query(None)):
         locks.cleanup()
         tree = list_data_files(settings)
-        file_path = next_available_file(tree, settings.annotation_file, locks, user, current_file)
+        file_path = next_available_file(tree, settings.annotation_file, locks, user, current_file, settings.annotation_scope)
         if not file_path:
             raise HTTPException(status_code=404, detail="No available unannotated files found")
         return {"file_path": file_path}
@@ -134,8 +146,13 @@ def create_app(profile_name: str | None = None, profile: DataProfile | None = No
         user = data.get("user")
         if not file_path or not user:
             raise HTTPException(status_code=400, detail="file_path and user are required")
-        annotations = load_annotations(settings.annotation_file)
-        if not settings.allow_open_annotated and find_annotation(annotations, file_path):
+        annotation_user = user if settings.annotation_scope == "user" else None
+        annotations = load_annotations(
+            settings.annotation_file,
+            user=annotation_user,
+            scope=settings.annotation_scope,
+        )
+        if not settings.allow_open_annotated and find_annotation(annotations, file_path, annotation_user, settings.annotation_scope):
             raise HTTPException(status_code=409, detail="This file has already been annotated")
         if not locks.acquire(file_path, user):
             active_user = locks.active[file_path]["user"]

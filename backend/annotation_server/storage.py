@@ -31,25 +31,47 @@ def write_json(path: Path, data: Any) -> None:
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def load_annotations(annotation_file: Path, file_path: str | None = None) -> dict:
+def annotation_scope_key(record: dict, scope: str = "shared") -> str:
+    file_path = record.get("file_path")
+    if not file_path:
+        return ""
+    if scope == "user":
+        return f"{file_path}\0{record.get('user', '')}"
+    return file_path
+
+
+def load_annotations(
+    annotation_file: Path,
+    file_path: str | None = None,
+    user: str | None = None,
+    scope: str = "shared",
+) -> dict:
     annotations = {}
     if not annotation_file.exists():
         return annotations if file_path is None else {}
 
+    scope = scope if scope in {"shared", "user"} else "shared"
+
     try:
         with annotation_file.open("r", encoding="utf-8") as handle:
-            for line in handle:
+            for line_number, line in enumerate(handle, start=1):
                 line = line.strip()
                 if not line:
                     continue
-                record = json.loads(line)
-                key = record.get("file_path")
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError as exc:
+                    print(f"Skip invalid annotation line {annotation_file}:{line_number}: {exc}")
+                    continue
+                if scope == "user" and user is not None and record.get("user") != user:
+                    continue
+                key = annotation_scope_key(record, scope)
                 if key:
                     annotations[key] = record
-    except (OSError, json.JSONDecodeError) as exc:
+    except OSError as exc:
         print(f"Failed to load annotations {annotation_file}: {exc}")
 
-    return annotations if file_path is None else find_annotation(annotations, file_path)
+    return annotations if file_path is None else find_annotation(annotations, file_path, user, scope)
 
 
 def normalize_path_key(path: str | Path | None) -> str:
@@ -103,21 +125,36 @@ def annotation_key_variants(path: str | Path | None) -> set[str]:
     return {normalize_path_key(value) for value in variants if value}
 
 
-def find_annotation(annotations: dict, file_path: str | Path) -> dict:
-    if file_path in annotations:
-        return annotations[file_path]
+def scoped_lookup_key(path: str | Path, user: str | None, scope: str) -> str:
+    if scope == "user":
+        return f"{path}\0{user or ''}"
+    return str(path)
+
+
+def find_annotation(
+    annotations: dict,
+    file_path: str | Path,
+    user: str | None = None,
+    scope: str = "shared",
+) -> dict:
+    scope = scope if scope in {"shared", "user"} else "shared"
+    direct_key = scoped_lookup_key(file_path, user, scope)
+    if direct_key in annotations:
+        return annotations[direct_key]
 
     variants = annotation_key_variants(file_path)
     for key in variants:
-        if key in annotations:
-            return annotations[key]
+        lookup_key = scoped_lookup_key(key, user, scope)
+        if lookup_key in annotations:
+            return annotations[lookup_key]
 
     target_logical = logical_annotation_key(file_path).lstrip("/")
     if not target_logical:
         return {}
 
     for key, annotation in annotations.items():
-        if logical_annotation_key(key).lstrip("/") == target_logical:
+        annotation_path = key.split("\0", 1)[0] if scope == "user" else key
+        if logical_annotation_key(annotation_path).lstrip("/") == target_logical:
             return annotation
 
     return {}
@@ -225,8 +262,13 @@ def write_annotation(annotation_file: Path, record: dict) -> None:
         handle.write(json.dumps(annotation, ensure_ascii=False) + "\n")
 
 
-def get_annotation_for_file(annotation_file: Path, file_path: str) -> dict:
-    annotation = load_annotations(annotation_file, file_path)
+def get_annotation_for_file(
+    annotation_file: Path,
+    file_path: str,
+    user: str | None = None,
+    scope: str = "shared",
+) -> dict:
+    annotation = load_annotations(annotation_file, file_path, user=user, scope=scope)
     if not annotation:
         return {
             "bad_channels": [],
@@ -266,6 +308,12 @@ def get_cache_key(root: Path) -> str:
     return hashlib.md5(f"{root}_{mtime}".encode()).hexdigest()
 
 
+def file_tree_cache_name(profile: DataProfile, prefix: str) -> str:
+    dataset_key = ",".join(profile.dataset_filters) if profile.dataset_filters else "all"
+    digest = hashlib.md5(dataset_key.encode()).hexdigest()[:8]
+    return f"{prefix}_{digest}.pkl"
+
+
 def list_files_recursive(
     root: Path,
     profile: DataProfile,
@@ -277,7 +325,7 @@ def list_files_recursive(
 
     if is_root_call:
         cache_dir.mkdir(parents=True, exist_ok=True)
-        cache_file = cache_dir / f"tree_{profile.data_source}.pkl"
+        cache_file = cache_dir / file_tree_cache_name(profile, f"tree_{profile.data_source}")
         if use_cache and cache_file.exists():
             try:
                 with cache_file.open("rb") as handle:
@@ -321,7 +369,7 @@ def list_files_recursive(
 
     if is_root_call:
         try:
-            with (cache_dir / f"tree_{profile.data_source}.pkl").open("wb") as handle:
+            with (cache_dir / file_tree_cache_name(profile, f"tree_{profile.data_source}")).open("wb") as handle:
                 pickle.dump(tree, handle)
         except Exception as exc:
             print(f"Save cache failed: {exc}")
@@ -350,7 +398,7 @@ def list_processed_files_recursive(
 
     if is_root_call:
         cache_dir.mkdir(parents=True, exist_ok=True)
-        cache_file = cache_dir / "tree_processed.pkl"
+        cache_file = cache_dir / file_tree_cache_name(profile, "tree_processed")
         if use_cache and cache_file.exists():
             try:
                 with cache_file.open("rb") as handle:
@@ -388,7 +436,7 @@ def list_processed_files_recursive(
 
     if is_root_call:
         try:
-            with (cache_dir / "tree_processed.pkl").open("wb") as handle:
+            with (cache_dir / file_tree_cache_name(profile, "tree_processed")).open("wb") as handle:
                 pickle.dump(tree, handle)
         except Exception as exc:
             print(f"Save processed cache failed: {exc}")
