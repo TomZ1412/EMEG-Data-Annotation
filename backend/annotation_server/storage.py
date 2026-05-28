@@ -303,6 +303,71 @@ def get_annotation_for_file(
     }
 
 
+def list_annotation_layers_for_file(
+    annotation_file: Path,
+    file_path: str,
+) -> list[dict]:
+    if not annotation_file.exists():
+        return []
+
+    target_variants = annotation_key_variants(file_path)
+    target_logical = logical_annotation_key(file_path).lstrip("/")
+    layers_by_user: dict[str, dict] = {}
+
+    try:
+        with annotation_file.open("r", encoding="utf-8") as handle:
+            for line_number, line in enumerate(handle, start=1):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError as exc:
+                    print(f"Skip invalid annotation line {annotation_file}:{line_number}: {exc}")
+                    continue
+
+                record_path = record.get("file_path")
+                if not record_path:
+                    continue
+                record_key = normalize_path_key(record_path)
+                record_logical = logical_annotation_key(record_path).lstrip("/")
+                if record_key not in target_variants and record_logical != target_logical:
+                    continue
+
+                try:
+                    annotation = normalize_annotation(record)
+                except (KeyError, TypeError, ValueError) as exc:
+                    print(f"Skip invalid annotation record {annotation_file}:{line_number}: {exc}")
+                    continue
+
+                user = str(annotation.get("user") or "legacy")
+                layers_by_user[user] = {
+                    "user": user,
+                    "annotation": get_annotation_payload(annotation),
+                }
+    except OSError as exc:
+        print(f"Failed to load annotation layers {annotation_file}: {exc}")
+
+    return [
+        {"user": user, "annotation": layer["annotation"]}
+        for user, layer in sorted(layers_by_user.items(), key=lambda item: item[0].lower())
+    ]
+
+
+def get_annotation_payload(annotation: dict) -> dict:
+    wav_bad_channels = _as_subblock_channels(
+        annotation.get("wav_bad_channels") or annotation.get("subblock_bad_channels")
+    )
+    return {
+        "bad_channels": next(iter(wav_bad_channels.values()), []),
+        "psd_bad_channels": _as_channel_list(annotation.get("psd_bad_channels")),
+        "wav_bad_channels": wav_bad_channels,
+        "subblock_bad_channels": wav_bad_channels,
+        "artifacts": _as_artifacts(annotation.get("artifacts")),
+        "discarded": bool(annotation.get("discarded", False)),
+    }
+
+
 def get_cache_key(root: Path) -> str:
     mtime = root.stat().st_mtime if root.exists() else 0
     return hashlib.md5(f"{root}_{mtime}".encode()).hexdigest()

@@ -17,6 +17,7 @@ from .storage import (
     find_annotation,
     get_annotation_for_file,
     list_data_files,
+    list_annotation_layers_for_file,
     load_annotations,
     write_annotation,
 )
@@ -117,6 +118,22 @@ def create_app(profile_name: str | None = None, profile: DataProfile | None = No
             user=annotation_user,
             scope=settings.annotation_scope,
         ))
+
+    @app.get("/api/annotation_layers/{file_path:path}")
+    def get_annotation_layers(file_path: str, user: Optional[str] = Query(None)):
+        if not settings.show_existing_annotations:
+            return JSONResponse({
+                "file_path": file_path,
+                "current_user": user or "",
+                "layers": [],
+            })
+
+        layers = list_annotation_layers_for_file(settings.annotation_file, file_path)
+        return JSONResponse({
+            "file_path": file_path,
+            "current_user": user or "",
+            "layers": layers,
+        })
 
     @app.post("/api/annotate")
     def annotate(record: dict):

@@ -11,6 +11,7 @@ const apiUrl = (path) => `http://${API_BASE_URL}/api${path}`;
 
 const ARTIFACT_WINDOW_SECONDS = 30;
 const emptyAnnotation = { psd_bad_channels: [], wav_bad_channels: {}, artifacts: [], discarded: false };
+const LAYER_COLORS = ["#7c3aed", "#0891b2", "#16a34a", "#db2777", "#9333ea", "#0d9488", "#ea580c", "#4f46e5"];
 
 const TEXT = {
   en: {
@@ -39,6 +40,12 @@ const TEXT = {
     currentWavBadChannels: "Current waveform bad channels",
     markedSubBlocks: "Marked waveform sub-blocks",
     artifactSegments: "Artifact segments",
+    overlayMode: "Other annotations",
+    overlayModes: {
+      mine: "Mine only",
+      others: "Show others",
+      othersOnly: "Others only",
+    },
     none: "None",
     submitAnnotation: "Submit annotation",
     submitting: "Submitting...",
@@ -125,6 +132,23 @@ function normalizeArtifacts(value) {
   });
 }
 
+function colorForLayer(user, index) {
+  if (!user) return LAYER_COLORS[index % LAYER_COLORS.length];
+  let hash = 0;
+  for (let i = 0; i < user.length; i += 1) {
+    hash = (hash * 31 + user.charCodeAt(i)) % 9973;
+  }
+  return LAYER_COLORS[(hash + index) % LAYER_COLORS.length];
+}
+
+function decorateAnnotationLayers(layers = [], currentUser = "") {
+  return layers.map((layer, index) => ({
+    ...layer,
+    color: colorForLayer(layer.user, index),
+    isCurrentUser: Boolean(currentUser) && layer.user === currentUser,
+  }));
+}
+
 function App() {
   const [fileTree, setFileTree] = useState([]);
   const [selectedFile, setSelectedFile] = useState(null);
@@ -140,6 +164,8 @@ function App() {
   const [subBlockIndex, setSubBlockIndex] = useState(0);
   const [isDataDiscarded, setIsDataDiscarded] = useState(false);
   const [fileAnnotationCache, setFileAnnotationCache] = useState({});
+  const [annotationLayers, setAnnotationLayers] = useState([]);
+  const [overlayMode, setOverlayMode] = useState("mine");
   const [language, setLanguage] = useState(() => localStorage.getItem("annotation_language") || "en");
 
   const keepAliveRef = useRef(null);
@@ -159,6 +185,16 @@ function App() {
     return Number.isFinite(start) && Number.isFinite(end) && start < currentArtifactEnd && end > currentArtifactStart;
   });
   const selectedRelativePath = displayRelativePath(selectedFile);
+  const decoratedAnnotationLayers = useMemo(
+    () => decorateAnnotationLayers(annotationLayers, currentUser),
+    [annotationLayers, currentUser]
+  );
+  const visibleAnnotationLayers = useMemo(() => {
+    if (overlayMode === "mine") return [];
+    return decoratedAnnotationLayers.filter((layer) => !layer.isCurrentUser);
+  }, [decoratedAnnotationLayers, overlayMode]);
+  const showCurrentAnnotation = overlayMode !== "othersOnly";
+  const overlayLabels = labels.overlayModes || TEXT.en.overlayModes;
 
   useEffect(() => {
     const savedUser = localStorage.getItem("annotation_user");
@@ -218,6 +254,7 @@ function App() {
       startKeepAlive(selectedFile);
 
       await fetchAnnotationData(selectedFile);
+      await fetchAnnotationLayers(selectedFile);
 
       if (!cancelled) {
         fetchVisualizationData(selectedFile, subBlockIndex);
@@ -357,11 +394,24 @@ function App() {
     }
   };
 
+  const fetchAnnotationLayers = async (filePath) => {
+    try {
+      const res = await axios.get(apiUrl(`/annotation_layers/${filePath}`), {
+        params: { user: currentUser },
+      });
+      setAnnotationLayers(Array.isArray(res.data?.layers) ? res.data.layers : []);
+    } catch (err) {
+      console.error("Failed to load annotation layers", err);
+      setAnnotationLayers([]);
+    }
+  };
+
   const handleFileSelect = async (filePath) => {
     if (!filePath) return;
     if (filePath === selectedFile) {
       visualizationCacheRef.current.delete(`${filePath}::${subBlockIndex}`);
       await fetchAnnotationData(filePath);
+      await fetchAnnotationLayers(filePath);
       fetchVisualizationData(filePath, subBlockIndex, true);
       return;
     }
@@ -377,6 +427,7 @@ function App() {
     setPsdBadChannels([]);
     setWavBadChannels({});
     setArtifactSegments([]);
+    setAnnotationLayers([]);
     setIsDataDiscarded(false);
     setError(null);
   };
@@ -426,6 +477,7 @@ function App() {
       };
 
       setFileAnnotationCache((prev) => ({ ...prev, [selectedFile]: annotation }));
+      await fetchAnnotationLayers(selectedFile);
       await endAnnotation(selectedFile);
       activeFileRef.current = null;
       alert(labels.annotationSaved(response.data.action));
@@ -470,6 +522,7 @@ function App() {
     visualizationCacheRef.current.delete(`${selectedFile}::${subBlockIndex}`);
     fetchVisualizationData(selectedFile, subBlockIndex, true);
     fetchAnnotationData(selectedFile);
+    fetchAnnotationLayers(selectedFile);
   };
 
   return (
@@ -535,12 +588,14 @@ function App() {
                 </div>
                 <WaveformViewer
                   data={visData}
-                  psdBadChannels={psdBadChannels}
-                  wavBadChannels={currentWavBadChannels}
+                  psdBadChannels={showCurrentAnnotation ? psdBadChannels : []}
+                  wavBadChannels={showCurrentAnnotation ? currentWavBadChannels : []}
                   setPsdBadChannels={setPsdBadChannels}
                   setWavBadChannels={handleWavBadChannelsChange}
-                  artifacts={artifactSegments}
+                  artifacts={showCurrentAnnotation ? artifactSegments : []}
                   setArtifacts={handleArtifactsChange}
+                  annotationLayers={visibleAnnotationLayers}
+                  annotationReadOnly={overlayMode === "othersOnly"}
                   loading={loadingData}
                   onSelectSubBlock={setSubBlockIndex}
                   currentSubBlockIndex={subBlockIndex}
@@ -555,6 +610,32 @@ function App() {
                   <div style={styles.panelValue}>
                     {subBlockIndex + 1}/{Math.max(1, Number(visData.totalSubBlocks || 1))}
                   </div>
+                </div>
+
+                <div style={styles.panelBlock}>
+                  <label htmlFor="overlay-mode" style={styles.panelLabel}>
+                    {labels.overlayMode || TEXT.en.overlayMode}
+                  </label>
+                  <select
+                    id="overlay-mode"
+                    value={overlayMode}
+                    onChange={(event) => setOverlayMode(event.target.value)}
+                    style={styles.selectInput}
+                  >
+                    <option value="mine">{overlayLabels.mine}</option>
+                    <option value="others">{overlayLabels.others}</option>
+                    <option value="othersOnly">{overlayLabels.othersOnly}</option>
+                  </select>
+                  {visibleAnnotationLayers.length > 0 && (
+                    <div style={styles.layerLegend}>
+                      {visibleAnnotationLayers.map((layer) => (
+                        <span key={layer.user} style={styles.layerLegendItem} title={layer.user}>
+                          <span style={{ ...styles.layerDot, background: layer.color }} />
+                          {layer.user}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
                 <div style={styles.panelBlock}>
@@ -770,6 +851,41 @@ const styles = {
   panelValue: {
     fontSize: 18,
     fontWeight: 800,
+  },
+  selectInput: {
+    width: "100%",
+    padding: "7px 8px",
+    border: "1px solid #cbd5e1",
+    borderRadius: 6,
+    background: "#ffffff",
+    color: "#334155",
+    fontSize: 13,
+  },
+  layerLegend: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: 5,
+  },
+  layerLegendItem: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 4,
+    maxWidth: "100%",
+    padding: "3px 5px",
+    border: "1px solid #e5e7eb",
+    borderRadius: 5,
+    background: "#f8fafc",
+    color: "#475569",
+    fontSize: 11,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+  layerDot: {
+    flex: "0 0 auto",
+    width: 8,
+    height: 8,
+    borderRadius: "50%",
   },
   checkboxLabel: {
     display: "flex",
