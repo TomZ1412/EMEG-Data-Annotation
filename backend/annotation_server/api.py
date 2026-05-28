@@ -47,6 +47,7 @@ def create_app(profile_name: str | None = None, profile: DataProfile | None = No
             "dataset_filters": list(settings.dataset_filters),
             "allow_open_annotated": settings.allow_open_annotated,
             "show_existing_annotations": settings.show_existing_annotations,
+            "show_annotation_layers": settings.show_annotation_layers,
             "annotation_scope": settings.annotation_scope,
         }
 
@@ -121,7 +122,7 @@ def create_app(profile_name: str | None = None, profile: DataProfile | None = No
 
     @app.get("/api/annotation_layers/{file_path:path}")
     def get_annotation_layers(file_path: str, user: Optional[str] = Query(None)):
-        if not settings.show_existing_annotations:
+        if not settings.show_existing_annotations or not settings.show_annotation_layers:
             return JSONResponse({
                 "file_path": file_path,
                 "current_user": user or "",

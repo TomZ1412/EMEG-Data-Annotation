@@ -62,6 +62,7 @@ You can override paths without editing code:
 - `ANNO_CACHE_TREE_PATH`
 - `ANNO_FILE_SUFFIXES`
 - `ANNO_CHANNEL_FILTERS`
+- `ANNO_SHOW_ANNOTATION_LAYERS`: defaults to `true`; set to `false` to hide other users' annotation overlays.
 
 Recommended processed-only server environment:
 
