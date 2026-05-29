@@ -158,6 +158,13 @@ export default function WaveformViewer({
   const firstLayerColor = (channel, index, view = activeView) =>
     matchingAnnotationLayers(channel, index, view)[0]?.color || null;
 
+  const layerUserText = (channel, index, view = activeView) => {
+    const users = matchingAnnotationLayers(channel, index, view)
+      .map((layer) => layer.user)
+      .filter(Boolean);
+    return users.length ? users.join(", ") : "";
+  };
+
   useEffect(() => {
     return () => {
       if (activePlotRef.current) Plotly.purge(activePlotRef.current);
@@ -426,13 +433,16 @@ export default function WaveformViewer({
         const values = wavData[channel] || [];
         const mean = values.reduce((sum, value) => sum + value, 0) / Math.max(1, values.length);
         const line = channelLine(channel, index, false);
+        const overlayUsers = layerUserText(channel, index, "wav");
         return {
           x: time.slice(0, values.length),
           y: values.map((value) => (value - mean) * scalingFactor + (channels.length - index - 1) * offset),
           name: channel,
           mode: "lines",
           line,
-          hoverinfo: "x+y+name",
+          hovertemplate: overlayUsers
+            ? `${channel}<br>Time: %{x:.2f}s<br>Other users: ${overlayUsers}<extra></extra>`
+            : `${channel}<br>Time: %{x:.2f}s<extra></extra>`,
           opacity: isBadChannel(wavBadChannels, channel, index) ? 1 : 0.88,
         };
       });
@@ -541,6 +551,7 @@ export default function WaveformViewer({
       const channels = Object.keys(psdSeries);
       const style = psdTraceStyle(channels);
       const traces = channels.map((channel, index) => {
+        const overlayUsers = layerUserText(channel, index, "psd");
         return {
           x: psdFrequencies,
           y: psdSeries[channel],
@@ -548,6 +559,9 @@ export default function WaveformViewer({
           mode: "lines",
           line: { color: style.colors[index], width: style.widths[index] },
           opacity: style.opacities[index],
+          hovertemplate: overlayUsers
+            ? `${channel}<br>Frequency: %{x:.2f} Hz<br>PSD: %{y}<br>Other users: ${overlayUsers}<extra></extra>`
+            : `${channel}<br>Frequency: %{x:.2f} Hz<br>PSD: %{y}<extra></extra>`,
         };
       });
 
@@ -722,6 +736,7 @@ export default function WaveformViewer({
             onToggle={toggleChannel}
             isBadChannel={isBadChannel}
             matchingAnnotationLayers={(channel, index) => matchingAnnotationLayers(channel, index, "psd")}
+            layerUserText={(channel, index) => layerUserText(channel, index, "psd")}
           />
         )}
       </div>
@@ -763,13 +778,14 @@ export default function WaveformViewer({
   );
 }
 
-function ChannelList({ channels, badChannels, hoveredChannel, onHover, onToggle, isBadChannel, matchingAnnotationLayers }) {
+function ChannelList({ channels, badChannels, hoveredChannel, onHover, onToggle, isBadChannel, matchingAnnotationLayers, layerUserText }) {
   return (
     <div style={styles.channelList}>
       {channels.map((channel, index) => {
         const isBad = isBadChannel(badChannels, channel, index);
         const isHovered = hoveredChannel === channel;
         const layers = matchingAnnotationLayers?.(channel, index) || [];
+        const users = layerUserText?.(channel, index) || "";
         return (
           <button
             key={channel}
@@ -777,7 +793,7 @@ function ChannelList({ channels, badChannels, hoveredChannel, onHover, onToggle,
             onMouseEnter={() => onHover(channel)}
             onMouseLeave={() => onHover(null)}
             onClick={() => onToggle(channel)}
-            title={channel}
+            title={users ? `${channel}\nOther users: ${users}` : channel}
             style={channelButtonStyle(isBad, isHovered, index)}
           >
             <span style={colorDotStyle(index, isBad, isHovered)} />

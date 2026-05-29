@@ -84,6 +84,19 @@ def load_visualization_bundle(
     sub_block: int,
     optimize: bool,
     max_points_per_channel: int,
+    include_psd: bool = True,
+) -> dict:
+    result = load_waveform_visualization(profile, file_path, sub_block, optimize, max_points_per_channel)
+    result["psd"] = load_psd_visualization(profile, file_path) if include_psd else {}
+    return result
+
+
+def load_waveform_visualization(
+    profile: DataProfile,
+    file_path: str,
+    sub_block: int,
+    optimize: bool,
+    max_points_per_channel: int,
 ) -> dict:
     vis_file = build_visualization_path(profile, file_path)
     base_name = vis_file.stem
@@ -96,7 +109,6 @@ def load_visualization_bundle(
         })
 
     wav_file = Path(str(vis_file).replace(".json", f"_wav_{sub_block}.json").replace("\\", "/"))
-    psd_file = Path(str(vis_file).replace(".json", "_psd.json").replace("\\", "/"))
     result = {"totalSubBlocks": total_sub_blocks}
 
     wav_data = load_visualization(wav_file, profile.channel_filters)
@@ -110,8 +122,13 @@ def load_visualization_bundle(
         result["wav"] = channels
 
     result["scaling_factor"] = wav_data.get("scaling_factor", 8000) if wav_data else 8000
-    result["psd"] = load_visualization(psd_file, profile.channel_filters) if resolve_visualization_file(psd_file) else {}
     return result
+
+
+def load_psd_visualization(profile: DataProfile, file_path: str) -> dict:
+    vis_file = build_visualization_path(profile, file_path)
+    psd_file = Path(str(vis_file).replace(".json", "_psd.json").replace("\\", "/"))
+    return load_visualization(psd_file, profile.channel_filters) if resolve_visualization_file(psd_file) else {}
 
 
 def flatten_files(tree: list[dict]) -> list[str]:

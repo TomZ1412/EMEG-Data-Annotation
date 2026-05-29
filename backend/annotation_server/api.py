@@ -7,9 +7,11 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 
+from .compression import CompressedResponseMiddleware
 from .config import DataProfile, load_profile
 from .services import (
     AnnotationLocks,
+    load_psd_visualization,
     load_visualization_bundle,
     next_available_file,
 )
@@ -28,6 +30,7 @@ def create_app(profile_name: str | None = None, profile: DataProfile | None = No
     locks = AnnotationLocks()
     app = FastAPI(title="Annotation Server")
 
+    app.add_middleware(CompressedResponseMiddleware)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
@@ -92,6 +95,7 @@ def create_app(profile_name: str | None = None, profile: DataProfile | None = No
         sub_block: int = Query(0),
         optimize: bool = True,
         max_points_per_channel: int = 1500,
+        include_psd: bool = True,
     ):
         return JSONResponse(load_visualization_bundle(
             settings,
@@ -99,7 +103,12 @@ def create_app(profile_name: str | None = None, profile: DataProfile | None = No
             sub_block,
             optimize,
             max_points_per_channel,
+            include_psd,
         ))
+
+    @app.get("/api/visualization_psd/{file_path:path}")
+    def get_visualization_psd(file_path: str):
+        return JSONResponse(load_psd_visualization(settings, file_path))
 
     @app.get("/api/annotation/{file_path:path}")
     def get_annotation(file_path: str, user: Optional[str] = Query(None)):

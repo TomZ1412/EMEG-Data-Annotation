@@ -11,7 +11,20 @@ const apiUrl = (path) => `http://${API_BASE_URL}/api${path}`;
 
 const ARTIFACT_WINDOW_SECONDS = 30;
 const emptyAnnotation = { psd_bad_channels: [], wav_bad_channels: {}, artifacts: [], discarded: false };
-const LAYER_COLORS = ["#7c3aed", "#0891b2", "#16a34a", "#db2777", "#9333ea", "#0d9488", "#ea580c", "#4f46e5"];
+const LAYER_COLORS = [
+  "#7c3aed",
+  "#059669",
+  "#d97706",
+  "#0891b2",
+  "#db2777",
+  "#4f46e5",
+  "#65a30d",
+  "#dc2626",
+  "#0d9488",
+  "#9333ea",
+  "#ca8a04",
+  "#0284c7",
+];
 
 const TEXT = {
   en: {
@@ -132,19 +145,16 @@ function normalizeArtifacts(value) {
   });
 }
 
-function colorForLayer(user, index) {
-  if (!user) return LAYER_COLORS[index % LAYER_COLORS.length];
-  let hash = 0;
-  for (let i = 0; i < user.length; i += 1) {
-    hash = (hash * 31 + user.charCodeAt(i)) % 9973;
-  }
-  return LAYER_COLORS[(hash + index) % LAYER_COLORS.length];
-}
-
 function decorateAnnotationLayers(layers = [], currentUser = "") {
-  return layers.map((layer, index) => ({
+  const orderedLayers = [...layers].sort((left, right) => {
+    if (left.user === currentUser) return -1;
+    if (right.user === currentUser) return 1;
+    return String(left.user || "").localeCompare(String(right.user || ""));
+  });
+
+  return orderedLayers.map((layer, index) => ({
     ...layer,
-    color: colorForLayer(layer.user, index),
+    color: LAYER_COLORS[index % LAYER_COLORS.length],
     isCurrentUser: Boolean(currentUser) && layer.user === currentUser,
   }));
 }
@@ -166,11 +176,13 @@ function App() {
   const [fileAnnotationCache, setFileAnnotationCache] = useState({});
   const [annotationLayers, setAnnotationLayers] = useState([]);
   const [overlayMode, setOverlayMode] = useState("mine");
+  const [selectedOverlayUser, setSelectedOverlayUser] = useState("");
   const [language, setLanguage] = useState(() => localStorage.getItem("annotation_language") || "en");
 
   const keepAliveRef = useRef(null);
   const activeFileRef = useRef(null);
   const visualizationCacheRef = useRef(new Map());
+  const psdCacheRef = useRef(new Map());
   const visualizationRequestRef = useRef(0);
 
   const allFiles = useMemo(() => flattenFiles(fileTree), [fileTree]);
@@ -191,8 +203,14 @@ function App() {
   );
   const visibleAnnotationLayers = useMemo(() => {
     if (overlayMode === "mine") return [];
-    return decoratedAnnotationLayers.filter((layer) => !layer.isCurrentUser);
-  }, [decoratedAnnotationLayers, overlayMode]);
+    const otherLayers = decoratedAnnotationLayers.filter((layer) => !layer.isCurrentUser);
+    if (!selectedOverlayUser) return otherLayers;
+    return otherLayers.filter((layer) => layer.user === selectedOverlayUser);
+  }, [decoratedAnnotationLayers, overlayMode, selectedOverlayUser]);
+  const overlayLegendLayers = useMemo(
+    () => decoratedAnnotationLayers.filter((layer) => !layer.isCurrentUser),
+    [decoratedAnnotationLayers]
+  );
   const showCurrentAnnotation = overlayMode !== "othersOnly";
   const overlayLabels = labels.overlayModes || TEXT.en.overlayModes;
 
@@ -337,10 +355,14 @@ function App() {
 
   const fetchVisualizationData = async (filePath, blockIndex = 0, force = false) => {
     const cacheKey = `${filePath}::${blockIndex}`;
+    const psdKey = filePath;
     const requestId = ++visualizationRequestRef.current;
 
-    if (!force && visualizationCacheRef.current.has(cacheKey)) {
-      setVisData(visualizationCacheRef.current.get(cacheKey));
+    if (!force && visualizationCacheRef.current.has(cacheKey) && psdCacheRef.current.has(psdKey)) {
+      setVisData({
+        ...visualizationCacheRef.current.get(cacheKey),
+        psd: psdCacheRef.current.get(psdKey),
+      });
       setError(null);
       setLoadingData(false);
       return;
@@ -350,10 +372,17 @@ function App() {
     setError(null);
 
     try {
-      const res = await axios.get(apiUrl(`/visualization/${filePath}?sub_block=${blockIndex}`));
+      const wavRequest = axios.get(apiUrl(`/visualization/${filePath}`), {
+        params: { sub_block: blockIndex, include_psd: false },
+      });
+      const psdRequest = !force && psdCacheRef.current.has(psdKey)
+        ? Promise.resolve({ data: psdCacheRef.current.get(psdKey) })
+        : axios.get(apiUrl(`/visualization_psd/${filePath}`));
+      const [wavRes, psdRes] = await Promise.all([wavRequest, psdRequest]);
       if (requestId !== visualizationRequestRef.current) return;
-      visualizationCacheRef.current.set(cacheKey, res.data);
-      setVisData(res.data);
+      visualizationCacheRef.current.set(cacheKey, wavRes.data);
+      psdCacheRef.current.set(psdKey, psdRes.data);
+      setVisData({ ...wavRes.data, psd: psdRes.data });
       setError(null);
     } catch (err) {
       if (requestId !== visualizationRequestRef.current) return;
@@ -410,6 +439,7 @@ function App() {
     if (!filePath) return;
     if (filePath === selectedFile) {
       visualizationCacheRef.current.delete(`${filePath}::${subBlockIndex}`);
+      psdCacheRef.current.delete(filePath);
       await fetchAnnotationData(filePath);
       await fetchAnnotationLayers(filePath);
       fetchVisualizationData(filePath, subBlockIndex, true);
@@ -428,6 +458,7 @@ function App() {
     setWavBadChannels({});
     setArtifactSegments([]);
     setAnnotationLayers([]);
+    setSelectedOverlayUser("");
     setIsDataDiscarded(false);
     setError(null);
   };
@@ -520,6 +551,7 @@ function App() {
   const refreshCurrentData = () => {
     if (!selectedFile) return;
     visualizationCacheRef.current.delete(`${selectedFile}::${subBlockIndex}`);
+    psdCacheRef.current.delete(selectedFile);
     fetchVisualizationData(selectedFile, subBlockIndex, true);
     fetchAnnotationData(selectedFile);
     fetchAnnotationLayers(selectedFile);
@@ -619,20 +651,29 @@ function App() {
                   <select
                     id="overlay-mode"
                     value={overlayMode}
-                    onChange={(event) => setOverlayMode(event.target.value)}
+                    onChange={(event) => {
+                      setOverlayMode(event.target.value);
+                      if (event.target.value === "mine") setSelectedOverlayUser("");
+                    }}
                     style={styles.selectInput}
                   >
                     <option value="mine">{overlayLabels.mine}</option>
                     <option value="others">{overlayLabels.others}</option>
                     <option value="othersOnly">{overlayLabels.othersOnly}</option>
                   </select>
-                  {visibleAnnotationLayers.length > 0 && (
+                  {overlayLegendLayers.length > 0 && overlayMode !== "mine" && (
                     <div style={styles.layerLegend}>
-                      {visibleAnnotationLayers.map((layer) => (
-                        <span key={layer.user} style={styles.layerLegendItem} title={layer.user}>
+                      {overlayLegendLayers.map((layer) => (
+                        <button
+                          key={layer.user}
+                          type="button"
+                          style={layerLegendItemStyle(selectedOverlayUser === layer.user)}
+                          title={layer.user}
+                          onClick={() => setSelectedOverlayUser((user) => (user === layer.user ? "" : layer.user))}
+                        >
                           <span style={{ ...styles.layerDot, background: layer.color }} />
                           {layer.user}
-                        </span>
+                        </button>
                       ))}
                     </div>
                   )}
@@ -866,21 +907,6 @@ const styles = {
     flexWrap: "wrap",
     gap: 5,
   },
-  layerLegendItem: {
-    display: "inline-flex",
-    alignItems: "center",
-    gap: 4,
-    maxWidth: "100%",
-    padding: "3px 5px",
-    border: "1px solid #e5e7eb",
-    borderRadius: 5,
-    background: "#f8fafc",
-    color: "#475569",
-    fontSize: 11,
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
-  },
   layerDot: {
     flex: "0 0 auto",
     width: 8,
@@ -954,6 +980,26 @@ const styles = {
     background: "#ffffff",
   },
 };
+
+function layerLegendItemStyle(active) {
+  return {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 4,
+    maxWidth: "100%",
+    padding: "3px 5px",
+    border: "1px solid",
+    borderColor: active ? "#2563eb" : "#e5e7eb",
+    borderRadius: 5,
+    background: active ? "#eff6ff" : "#f8fafc",
+    color: active ? "#1d4ed8" : "#475569",
+    fontSize: 11,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+    cursor: "pointer",
+  };
+}
 
 const buttonStateStyles = `
   button:not(:disabled) {

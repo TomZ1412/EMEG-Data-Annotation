@@ -18,8 +18,12 @@ export const endAnnotation = (filePath, user) =>
   unwrap(apiClient.post("/end_annotation", { file_path: filePath, user }));
 export const keepAnnotationAlive = (filePath, user) =>
   unwrap(apiClient.post("/keep_alive", { file_path: filePath, user }));
-export const getVisualization = (filePath, subBlock = 0) =>
-  unwrap(apiClient.get(`/visualization/${filePath}`, { params: { sub_block: subBlock } }));
+export const getVisualization = (filePath, subBlock = 0, includePsd = true) =>
+  unwrap(apiClient.get(`/visualization/${filePath}`, {
+    params: { sub_block: subBlock, include_psd: includePsd },
+  }));
+export const getVisualizationPsd = (filePath) =>
+  unwrap(apiClient.get(`/visualization_psd/${filePath}`));
 export const getAnnotation = (filePath) =>
   unwrap(apiClient.get(`/annotation/${filePath}`));
 export const saveAnnotation = (payload) =>
