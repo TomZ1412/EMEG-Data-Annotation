@@ -18,11 +18,43 @@ from .services import (
 from .storage import (
     find_annotation,
     get_annotation_for_file,
+    get_score_annotation_for_file,
     list_data_files,
     list_annotation_layers_for_file,
+    list_score_annotation_layers_for_file,
     load_annotations,
     write_annotation,
+    write_score_annotation,
 )
+
+
+def active_annotation_mode(settings: DataProfile) -> str:
+    return "channel_score" if settings.annotation_mode == "channel_score" else "bad_channel"
+
+
+def active_annotation_file(settings: DataProfile) -> Path:
+    if active_annotation_mode(settings) == "channel_score":
+        return settings.score_annotation_file or settings.annotation_file
+    return settings.annotation_file
+
+
+def empty_annotation_payload(settings: DataProfile) -> dict:
+    payload = {
+        "bad_channels": [],
+        "psd_bad_channels": [],
+        "wav_bad_channels": {},
+        "subblock_bad_channels": {},
+        "artifacts": [],
+        "discarded": False,
+    }
+    if active_annotation_mode(settings) == "channel_score":
+        payload.update({
+            "psd_channel_scores": {},
+            "wav_channel_scores": {},
+            "subblock_channel_scores": {},
+            "score_threshold": settings.score_threshold,
+        })
+    return payload
 
 
 def create_app(profile_name: str | None = None, profile: DataProfile | None = None) -> FastAPI:
@@ -47,6 +79,10 @@ def create_app(profile_name: str | None = None, profile: DataProfile | None = No
             "raw_data_root": str(settings.raw_data_root),
             "vis_data_root": str(settings.vis_data_root),
             "annotation_file": str(settings.annotation_file),
+            "active_annotation_file": str(active_annotation_file(settings)),
+            "annotation_mode": active_annotation_mode(settings),
+            "score_annotation_file": str(settings.score_annotation_file or ""),
+            "score_threshold": settings.score_threshold,
             "dataset_filters": list(settings.dataset_filters),
             "allow_open_annotated": settings.allow_open_annotated,
             "show_existing_annotations": settings.show_existing_annotations,
@@ -65,8 +101,9 @@ def create_app(profile_name: str | None = None, profile: DataProfile | None = No
     def get_file_tree(refresh: bool = Query(False), user: Optional[str] = Query(None)):
         tree = list_data_files(settings, use_cache=not refresh)
         annotation_user = user if settings.annotation_scope == "user" else None
+        annotation_file = active_annotation_file(settings)
         annotations = load_annotations(
-            settings.annotation_file,
+            annotation_file,
             user=annotation_user,
             scope=settings.annotation_scope,
         )
@@ -113,17 +150,18 @@ def create_app(profile_name: str | None = None, profile: DataProfile | None = No
     @app.get("/api/annotation/{file_path:path}")
     def get_annotation(file_path: str, user: Optional[str] = Query(None)):
         if not settings.show_existing_annotations:
-            return JSONResponse({
-                "bad_channels": [],
-                "psd_bad_channels": [],
-                "wav_bad_channels": {},
-                "subblock_bad_channels": {},
-                "artifacts": [],
-                "discarded": False,
-            })
+            return JSONResponse(empty_annotation_payload(settings))
         annotation_user = user if settings.annotation_scope == "user" else None
+        if active_annotation_mode(settings) == "channel_score":
+            return JSONResponse(get_score_annotation_for_file(
+                active_annotation_file(settings),
+                file_path,
+                user=annotation_user,
+                scope=settings.annotation_scope,
+                score_threshold=settings.score_threshold,
+            ))
         return JSONResponse(get_annotation_for_file(
-            settings.annotation_file,
+            active_annotation_file(settings),
             file_path,
             user=annotation_user,
             scope=settings.annotation_scope,
@@ -138,7 +176,14 @@ def create_app(profile_name: str | None = None, profile: DataProfile | None = No
                 "layers": [],
             })
 
-        layers = list_annotation_layers_for_file(settings.annotation_file, file_path)
+        if active_annotation_mode(settings) == "channel_score":
+            layers = list_score_annotation_layers_for_file(
+                active_annotation_file(settings),
+                file_path,
+                settings.score_threshold,
+            )
+        else:
+            layers = list_annotation_layers_for_file(active_annotation_file(settings), file_path)
         return JSONResponse({
             "file_path": file_path,
             "current_user": user or "",
@@ -154,7 +199,10 @@ def create_app(profile_name: str | None = None, profile: DataProfile | None = No
         if locks.is_occupied_by_other(file_path, user):
             raise HTTPException(status_code=409, detail="File is being annotated by another user")
 
-        write_annotation(settings.annotation_file, record)
+        if active_annotation_mode(settings) == "channel_score":
+            write_score_annotation(active_annotation_file(settings), record, settings.score_threshold)
+        else:
+            write_annotation(active_annotation_file(settings), record)
         locks.release(file_path, user)
         return {"status": "ok", "action": "updated"}
 
@@ -162,7 +210,7 @@ def create_app(profile_name: str | None = None, profile: DataProfile | None = No
     def get_next_unannotated(user: str = Query(...), current_file: Optional[str] = Query(None)):
         locks.cleanup()
         tree = list_data_files(settings)
-        file_path = next_available_file(tree, settings.annotation_file, locks, user, current_file, settings.annotation_scope)
+        file_path = next_available_file(tree, active_annotation_file(settings), locks, user, current_file, settings.annotation_scope)
         if not file_path:
             raise HTTPException(status_code=404, detail="No available unannotated files found")
         return {"file_path": file_path}
@@ -175,7 +223,7 @@ def create_app(profile_name: str | None = None, profile: DataProfile | None = No
             raise HTTPException(status_code=400, detail="file_path and user are required")
         annotation_user = user if settings.annotation_scope == "user" else None
         annotations = load_annotations(
-            settings.annotation_file,
+            active_annotation_file(settings),
             user=annotation_user,
             scope=settings.annotation_scope,
         )

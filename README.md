@@ -63,6 +63,9 @@ You can override paths without editing code:
 - `ANNO_FILE_SUFFIXES`
 - `ANNO_CHANNEL_FILTERS`
 - `ANNO_SHOW_ANNOTATION_LAYERS`: defaults to `true`; set to `false` to hide other users' annotation overlays.
+- `ANNO_ANNOTATION_MODE`: defaults to `bad_channel`; set to `channel_score` to score every channel from 0 to 5.
+- `ANNO_SCORE_ANNOTATION_FILE`: JSONL output path for `channel_score` mode. Defaults to a sibling file named like `*_scores.jsonl`.
+- `ANNO_SCORE_THRESHOLD`: defaults to `3`; scores greater than or equal to this value are exposed as threshold bad channels.
 
 Recommended processed-only server environment:
 
@@ -71,6 +74,15 @@ ANNO_DATA_SOURCE=processed
 ANNO_VIS_DATA_ROOT=/data/anno/processed
 ANNO_ANNOTATION_FILE=/data/anno/annotations/bad_channels.jsonl
 ANNO_CACHE_TREE_PATH=/data/anno/cache/file_tree
+```
+
+Scoring-mode example:
+
+```bash
+ANNO_PROFILE=annotate
+ANNO_ANNOTATION_MODE=channel_score
+ANNO_SCORE_ANNOTATION_FILE=/data/anno/annotations/channel_scores.jsonl
+ANNO_SCORE_THRESHOLD=3
 ```
 
 ## Frontend Web Deployment

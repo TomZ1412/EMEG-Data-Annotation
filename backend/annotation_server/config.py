@@ -27,6 +27,9 @@ class DataProfile:
     show_existing_annotations: bool = True
     show_annotation_layers: bool = True
     annotation_scope: str = "shared"
+    annotation_mode: str = "bad_channel"
+    score_annotation_file: Path | None = None
+    score_threshold: int = 3
 
 
 PROFILES = {
@@ -74,6 +77,20 @@ def _csv_from_env(name: str, fallback: tuple[str, ...] = ()) -> tuple[str, ...]:
     return tuple(item.strip() for item in value.split(",") if item.strip())
 
 
+def _int_from_env(name: str, fallback: int) -> int:
+    value = os.getenv(name)
+    if value is None:
+        return fallback
+    try:
+        return int(value)
+    except ValueError:
+        return fallback
+
+
+def _default_score_annotation_file(annotation_file: Path) -> Path:
+    return annotation_file.with_name(f"{annotation_file.stem}_scores{annotation_file.suffix}")
+
+
 def load_profile(profile_name: str | None = None) -> DataProfile:
     name = profile_name or os.getenv("ANNO_PROFILE", "not_used")
     base = PROFILES.get(name)
@@ -83,11 +100,16 @@ def load_profile(profile_name: str | None = None) -> DataProfile:
 
     suffixes = os.getenv("ANNO_FILE_SUFFIXES")
     channel_filters = os.getenv("ANNO_CHANNEL_FILTERS")
+    annotation_file = _path_from_env("ANNO_ANNOTATION_FILE", base.annotation_file)
+    score_annotation_file = _path_from_env(
+        "ANNO_SCORE_ANNOTATION_FILE",
+        base.score_annotation_file or _default_score_annotation_file(annotation_file),
+    )
 
     return DataProfile(
         raw_data_root=_path_from_env("ANNO_RAW_DATA_ROOT", base.raw_data_root),
         vis_data_root=_path_from_env("ANNO_VIS_DATA_ROOT", base.vis_data_root),
-        annotation_file=_path_from_env("ANNO_ANNOTATION_FILE", base.annotation_file),
+        annotation_file=annotation_file,
         dropped_dataset_path=_path_from_env("ANNO_DROPPED_DATASET_PATH", base.dropped_dataset_path),
         cache_tree_path=_path_from_env("ANNO_CACHE_TREE_PATH", base.cache_tree_path),
         file_suffixes=tuple(s.strip().lower() for s in suffixes.split(",")) if suffixes else base.file_suffixes,
@@ -101,4 +123,7 @@ def load_profile(profile_name: str | None = None) -> DataProfile:
         show_existing_annotations=_bool_from_env("ANNO_SHOW_EXISTING_ANNOTATIONS", base.show_existing_annotations),
         show_annotation_layers=_bool_from_env("ANNO_SHOW_ANNOTATION_LAYERS", base.show_annotation_layers),
         annotation_scope=os.getenv("ANNO_ANNOTATION_SCOPE", base.annotation_scope).strip().lower(),
+        annotation_mode=os.getenv("ANNO_ANNOTATION_MODE", base.annotation_mode).strip().lower(),
+        score_annotation_file=score_annotation_file,
+        score_threshold=max(0, min(5, _int_from_env("ANNO_SCORE_THRESHOLD", base.score_threshold))),
     )
