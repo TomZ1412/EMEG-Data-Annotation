@@ -209,22 +209,6 @@ def _as_subblock_scores(value: Any) -> dict:
     return subblock_scores
 
 
-def _channels_at_threshold(scores: dict, threshold: int) -> list:
-    return [
-        channel
-        for channel, score in scores.items()
-        if isinstance(score, int) and score >= threshold
-    ]
-
-
-def _subblock_channels_at_threshold(subblock_scores: dict, threshold: int) -> dict:
-    return {
-        str(key): _channels_at_threshold(scores, threshold)
-        for key, scores in subblock_scores.items()
-        if _channels_at_threshold(scores, threshold)
-    }
-
-
 def _as_artifact_list(value: Any) -> list:
     if not isinstance(value, list):
         return []
@@ -304,14 +288,9 @@ def normalize_annotation(record: dict) -> dict:
     }
 
 
-def normalize_score_annotation(record: dict, score_threshold: int = 3) -> dict:
+def normalize_score_annotation(record: dict) -> dict:
     if not record.get("file_path"):
         raise ValueError("file_path is required")
-
-    threshold = _as_score(record.get("score_threshold"))
-    if threshold is None:
-        threshold = score_threshold
-    threshold = max(0, min(5, int(threshold)))
 
     psd_scores = record.get("psd_channel_scores")
     if psd_scores is None:
@@ -322,8 +301,6 @@ def normalize_score_annotation(record: dict, score_threshold: int = 3) -> dict:
 
     psd_channel_scores = _as_channel_scores(psd_scores)
     wav_channel_scores = _as_subblock_scores(wav_scores)
-    psd_bad_channels = _channels_at_threshold(psd_channel_scores, threshold)
-    wav_bad_channels = _subblock_channels_at_threshold(wav_channel_scores, threshold)
 
     return {
         "file_path": record["file_path"],
@@ -331,10 +308,9 @@ def normalize_score_annotation(record: dict, score_threshold: int = 3) -> dict:
         "psd_channel_scores": psd_channel_scores,
         "wav_channel_scores": wav_channel_scores,
         "subblock_channel_scores": wav_channel_scores,
-        "score_threshold": threshold,
-        "psd_bad_channels": psd_bad_channels,
-        "wav_bad_channels": wav_bad_channels,
-        "subblock_bad_channels": wav_bad_channels,
+        "psd_bad_channels": [],
+        "wav_bad_channels": {},
+        "subblock_bad_channels": {},
         "artifacts": _as_artifacts(record.get("artifacts")),
         "discarded": bool(record.get("discarded", False)),
         "user": record.get("user", ""),
@@ -352,8 +328,8 @@ def write_annotation(annotation_file: Path, record: dict) -> None:
         handle.write(json.dumps(annotation, ensure_ascii=False) + "\n")
 
 
-def write_score_annotation(annotation_file: Path, record: dict, score_threshold: int = 3) -> None:
-    annotation = normalize_score_annotation(record, score_threshold)
+def write_score_annotation(annotation_file: Path, record: dict) -> None:
+    annotation = normalize_score_annotation(record)
 
     annotation_file.parent.mkdir(parents=True, exist_ok=True)
     with annotation_file.open("a", encoding="utf-8") as handle:
@@ -406,7 +382,6 @@ def get_score_annotation_for_file(
     file_path: str,
     user: str | None = None,
     scope: str = "shared",
-    score_threshold: int = 3,
 ) -> dict:
     annotation = load_annotations(annotation_file, file_path, user=user, scope=scope)
     if not annotation:
@@ -418,14 +393,13 @@ def get_score_annotation_for_file(
             "psd_channel_scores": {},
             "wav_channel_scores": {},
             "subblock_channel_scores": {},
-            "score_threshold": score_threshold,
             "artifacts": [],
             "discarded": False,
         }
 
-    payload = get_score_annotation_payload(annotation, score_threshold)
+    payload = get_score_annotation_payload(annotation)
     return {
-        "bad_channels": next(iter(payload["wav_bad_channels"].values()), []),
+        "bad_channels": [],
         **payload,
     }
 
@@ -484,7 +458,6 @@ def list_annotation_layers_for_file(
 def list_score_annotation_layers_for_file(
     annotation_file: Path,
     file_path: str,
-    score_threshold: int = 3,
 ) -> list[dict]:
     if not annotation_file.exists():
         return []
@@ -514,7 +487,7 @@ def list_score_annotation_layers_for_file(
                     continue
 
                 try:
-                    annotation = normalize_score_annotation(record, score_threshold)
+                    annotation = normalize_score_annotation(record)
                 except (KeyError, TypeError, ValueError) as exc:
                     print(f"Skip invalid score annotation record {annotation_file}:{line_number}: {exc}")
                     continue
@@ -522,7 +495,7 @@ def list_score_annotation_layers_for_file(
                 user = str(annotation.get("user") or "legacy")
                 layers_by_user[user] = {
                     "user": user,
-                    "annotation": get_score_annotation_payload(annotation, score_threshold),
+                    "annotation": get_score_annotation_payload(annotation),
                 }
     except OSError as exc:
         print(f"Failed to load score annotation layers {annotation_file}: {exc}")
@@ -547,29 +520,21 @@ def get_annotation_payload(annotation: dict) -> dict:
     }
 
 
-def get_score_annotation_payload(annotation: dict, score_threshold: int = 3) -> dict:
-    threshold = _as_score(annotation.get("score_threshold"))
-    if threshold is None:
-        threshold = score_threshold
-    threshold = max(0, min(5, int(threshold)))
-
+def get_score_annotation_payload(annotation: dict) -> dict:
     psd_channel_scores = _as_channel_scores(
         annotation.get("psd_channel_scores") or annotation.get("psd_scores")
     )
     wav_channel_scores = _as_subblock_scores(
         annotation.get("wav_channel_scores") or annotation.get("subblock_channel_scores")
     )
-    psd_bad_channels = _channels_at_threshold(psd_channel_scores, threshold)
-    wav_bad_channels = _subblock_channels_at_threshold(wav_channel_scores, threshold)
 
     return {
-        "psd_bad_channels": psd_bad_channels,
-        "wav_bad_channels": wav_bad_channels,
-        "subblock_bad_channels": wav_bad_channels,
+        "psd_bad_channels": [],
+        "wav_bad_channels": {},
+        "subblock_bad_channels": {},
         "psd_channel_scores": psd_channel_scores,
         "wav_channel_scores": wav_channel_scores,
         "subblock_channel_scores": wav_channel_scores,
-        "score_threshold": threshold,
         "artifacts": _as_artifacts(annotation.get("artifacts")),
         "discarded": bool(annotation.get("discarded", False)),
     }

@@ -60,7 +60,6 @@ const TEXT = {
     currentWavBadChannels: "Current waveform bad channels",
     psdChannelScores: "PSD channel scores",
     currentWavChannelScores: "Current waveform scores",
-    thresholdBadChannels: "Score >= threshold",
     markedSubBlocks: "Marked waveform sub-blocks",
     artifactSegments: "Artifact segments",
     overlayMode: "Other annotations",
@@ -103,7 +102,6 @@ const TEXT = {
     currentWavBadChannels: "当前波形坏道",
     psdChannelScores: "PSD 通道评分",
     currentWavChannelScores: "当前波形评分",
-    thresholdBadChannels: "达到阈值通道",
     markedSubBlocks: "已标注波形子图",
     none: "无",
     submitAnnotation: "提交标注",
@@ -178,12 +176,6 @@ function normalizeSubblockScores(value) {
   }, {});
 }
 
-function channelsAtThreshold(scores = {}, threshold = 3) {
-  return Object.entries(scores)
-    .filter(([, score]) => Number(score) >= threshold)
-    .map(([channel]) => channel);
-}
-
 function formatScores(scores = {}) {
   const entries = Object.entries(scores).sort(([left], [right]) => left.localeCompare(right));
   return entries.length ? entries.map(([channel, score]) => `${channel}: ${score}`).join(", ") : "";
@@ -225,7 +217,6 @@ function App() {
   const [selectedOverlayUser, setSelectedOverlayUser] = useState("");
   const [language, setLanguage] = useState(() => localStorage.getItem("annotation_language") || "en");
   const [annotationMode, setAnnotationMode] = useState("bad_channel");
-  const [scoreThreshold, setScoreThreshold] = useState(3);
 
   const keepAliveRef = useRef(null);
   const activeFileRef = useRef(null);
@@ -238,9 +229,7 @@ function App() {
   const labels = TEXT[language] || TEXT.en;
   const isScoreMode = annotationMode === "channel_score";
   const currentWavScoreMap = wavChannelScores[subBlockIndex] || {};
-  const currentPsdThresholdChannels = channelsAtThreshold(psdChannelScores, scoreThreshold);
-  const currentWavThresholdChannels = channelsAtThreshold(currentWavScoreMap, scoreThreshold);
-  const currentWavBadChannels = isScoreMode ? currentWavThresholdChannels : wavBadChannels[subBlockIndex] || [];
+  const currentWavBadChannels = isScoreMode ? [] : wavBadChannels[subBlockIndex] || [];
   const currentArtifactStart = subBlockIndex * ARTIFACT_WINDOW_SECONDS;
   const currentArtifactEnd = currentArtifactStart + ARTIFACT_WINDOW_SECONDS;
   const currentArtifacts = artifactSegments.filter((item) => {
@@ -271,10 +260,6 @@ function App() {
       .get(apiUrl("/health"))
       .then((res) => {
         setAnnotationMode(res.data?.annotation_mode === "channel_score" ? "channel_score" : "bad_channel");
-        const threshold = Number(res.data?.score_threshold);
-        if (Number.isInteger(threshold) && threshold >= 0 && threshold <= 5) {
-          setScoreThreshold(threshold);
-        }
       })
       .catch((err) => console.error("Failed to load server settings", err));
   }, []);
@@ -556,7 +541,7 @@ function App() {
     Object.keys(isScoreMode ? wavChannelScores : wavBadChannels)
       .filter((index) =>
         isScoreMode
-          ? channelsAtThreshold(wavChannelScores[index], scoreThreshold).length > 0
+          ? Object.keys(wavChannelScores[index] || {}).length > 0
           : wavBadChannels[index]?.length > 0
       )
       .map(Number)
@@ -577,7 +562,6 @@ function App() {
             psd_channel_scores: psdChannelScores,
             wav_channel_scores: wavChannelScores,
             subblock_channel_scores: wavChannelScores,
-            score_threshold: scoreThreshold,
             artifacts: artifactSegments,
             user: currentUser,
             discarded: isDataDiscarded,
@@ -596,12 +580,8 @@ function App() {
       const response = await axios.post(apiUrl("/annotate"), payload);
       const annotation = isScoreMode
         ? {
-            psd_bad_channels: currentPsdThresholdChannels,
-            wav_bad_channels: Object.fromEntries(
-              Object.entries(wavChannelScores)
-                .map(([index, scores]) => [index, channelsAtThreshold(scores, scoreThreshold)])
-                .filter(([, channels]) => channels.length)
-            ),
+            psd_bad_channels: [],
+            wav_bad_channels: {},
             psd_channel_scores: psdChannelScores,
             wav_channel_scores: wavChannelScores,
             artifacts: artifactSegments,
@@ -730,7 +710,6 @@ function App() {
                   psdBadChannels={showCurrentAnnotation ? psdBadChannels : []}
                   wavBadChannels={showCurrentAnnotation ? currentWavBadChannels : []}
                   annotationMode={annotationMode}
-                  scoreThreshold={scoreThreshold}
                   psdChannelScores={showCurrentAnnotation ? psdChannelScores : {}}
                   wavChannelScores={showCurrentAnnotation ? currentWavScoreMap : {}}
                   setPsdBadChannels={setPsdBadChannels}
@@ -820,15 +799,6 @@ function App() {
                       : currentWavBadChannels.length ? currentWavBadChannels.join(", ") : labels.none}
                   </div>
                 </div>
-
-                {isScoreMode && (
-                  <div style={styles.panelBlock}>
-                    <div style={styles.panelLabel}>{labels.thresholdBadChannels}</div>
-                    <div style={styles.badChannelBox}>
-                      {currentWavThresholdChannels.length ? currentWavThresholdChannels.join(", ") : labels.none}
-                    </div>
-                  </div>
-                )}
 
                 <div style={styles.panelBlock}>
                   <div style={styles.panelLabel}>{labels.markedSubBlocks}</div>

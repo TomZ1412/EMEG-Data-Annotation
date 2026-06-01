@@ -52,7 +52,6 @@ def empty_annotation_payload(settings: DataProfile) -> dict:
             "psd_channel_scores": {},
             "wav_channel_scores": {},
             "subblock_channel_scores": {},
-            "score_threshold": settings.score_threshold,
         })
     return payload
 
@@ -82,7 +81,6 @@ def create_app(profile_name: str | None = None, profile: DataProfile | None = No
             "active_annotation_file": str(active_annotation_file(settings)),
             "annotation_mode": active_annotation_mode(settings),
             "score_annotation_file": str(settings.score_annotation_file or ""),
-            "score_threshold": settings.score_threshold,
             "dataset_filters": list(settings.dataset_filters),
             "allow_open_annotated": settings.allow_open_annotated,
             "show_existing_annotations": settings.show_existing_annotations,
@@ -158,7 +156,6 @@ def create_app(profile_name: str | None = None, profile: DataProfile | None = No
                 file_path,
                 user=annotation_user,
                 scope=settings.annotation_scope,
-                score_threshold=settings.score_threshold,
             ))
         return JSONResponse(get_annotation_for_file(
             active_annotation_file(settings),
@@ -180,7 +177,6 @@ def create_app(profile_name: str | None = None, profile: DataProfile | None = No
             layers = list_score_annotation_layers_for_file(
                 active_annotation_file(settings),
                 file_path,
-                settings.score_threshold,
             )
         else:
             layers = list_annotation_layers_for_file(active_annotation_file(settings), file_path)
@@ -200,7 +196,7 @@ def create_app(profile_name: str | None = None, profile: DataProfile | None = No
             raise HTTPException(status_code=409, detail="File is being annotated by another user")
 
         if active_annotation_mode(settings) == "channel_score":
-            write_score_annotation(active_annotation_file(settings), record, settings.score_threshold)
+            write_score_annotation(active_annotation_file(settings), record)
         else:
             write_annotation(active_annotation_file(settings), record)
         locks.release(file_path, user)

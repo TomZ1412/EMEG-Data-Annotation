@@ -29,7 +29,6 @@ class DataProfile:
     annotation_scope: str = "shared"
     annotation_mode: str = "bad_channel"
     score_annotation_file: Path | None = None
-    score_threshold: int = 3
 
 
 PROFILES = {
@@ -77,16 +76,6 @@ def _csv_from_env(name: str, fallback: tuple[str, ...] = ()) -> tuple[str, ...]:
     return tuple(item.strip() for item in value.split(",") if item.strip())
 
 
-def _int_from_env(name: str, fallback: int) -> int:
-    value = os.getenv(name)
-    if value is None:
-        return fallback
-    try:
-        return int(value)
-    except ValueError:
-        return fallback
-
-
 def _default_score_annotation_file(annotation_file: Path) -> Path:
     return annotation_file.with_name(f"{annotation_file.stem}_scores{annotation_file.suffix}")
 
@@ -125,5 +114,4 @@ def load_profile(profile_name: str | None = None) -> DataProfile:
         annotation_scope=os.getenv("ANNO_ANNOTATION_SCOPE", base.annotation_scope).strip().lower(),
         annotation_mode=os.getenv("ANNO_ANNOTATION_MODE", base.annotation_mode).strip().lower(),
         score_annotation_file=score_annotation_file,
-        score_threshold=max(0, min(5, _int_from_env("ANNO_SCORE_THRESHOLD", base.score_threshold))),
     )

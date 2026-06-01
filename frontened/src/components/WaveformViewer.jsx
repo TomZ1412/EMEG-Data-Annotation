@@ -5,11 +5,12 @@ const BAD_COLOR = "#dc2626";
 const HOVER_COLOR = "#f59e0b";
 const GOOD_COLOR = "#2563eb";
 const SCORE_COLORS = {
-  1: "#facc15",
-  2: "#f59e0b",
-  3: "#dc2626",
-  4: "#991b1b",
-  5: "#581c87",
+  0: "#2563eb",
+  1: "#22c55e",
+  2: "#eab308",
+  3: "#f97316",
+  4: "#dc2626",
+  5: "#7e22ce",
 };
 const WINDOW_DURATION_SECONDS = 30;
 const CHANNEL_COLORS = [
@@ -46,6 +47,15 @@ const TEXT = {
     waveform: "Waveform",
     badChannels: "bad channels",
     scoredChannels: "scored channels",
+    scoreLegend: "Score colors",
+    scoreLabels: {
+      0: "0 normal",
+      1: "1 mild",
+      2: "2 light abnormal",
+      3: "3 abnormal",
+      4: "4 severe",
+      5: "5 unusable",
+    },
     markAll: "Mark all",
     clear: "Clear",
     scale: "Scale",
@@ -62,6 +72,15 @@ const TEXT = {
     waveform: "波形",
     badChannels: "坏道",
     scoredChannels: "评分通道",
+    scoreLegend: "评分颜色",
+    scoreLabels: {
+      0: "0 正常",
+      1: "1 轻微",
+      2: "2 轻度异常",
+      3: "3 异常",
+      4: "4 严重",
+      5: "5 不可用",
+    },
     markAll: "全选",
     clear: "清空",
     scale: "缩放",
@@ -90,7 +109,6 @@ export default function WaveformViewer({
   psdBadChannels = [],
   wavBadChannels = [],
   annotationMode = "bad_channel",
-  scoreThreshold = 3,
   psdChannelScores = {},
   wavChannelScores = {},
   artifacts = [],
@@ -117,6 +135,7 @@ export default function WaveformViewer({
   const [scalingFactor, setScalingFactor] = useState(8000);
   const [hoveredChannel, setHoveredChannel] = useState(null);
   const [pendingArtifact, setPendingArtifact] = useState(null);
+  const [scoreMenu, setScoreMenu] = useState(null);
 
   const totalSubBlocks = Math.max(1, Number(data?.totalSubBlocks || 1));
   const wavData = data?.wav || {};
@@ -130,10 +149,7 @@ export default function WaveformViewer({
   const setActiveBadChannels = activeView === "psd" ? setPsdBadChannels : setWavBadChannels;
   const activeChannelScores = activeView === "psd" ? psdChannelScores : wavChannelScores;
   const setActiveChannelScores = activeView === "psd" ? setPsdChannelScores : setWavChannelScores;
-  const activeScoreBadChannels = Object.entries(activeChannelScores || {})
-    .filter(([, score]) => Number(score) >= scoreThreshold)
-    .map(([channel]) => channel);
-  const visibleBadChannels = isScoreMode ? activeScoreBadChannels : activeBadChannels;
+  const visibleBadChannels = isScoreMode ? [] : activeBadChannels;
 
   useEffect(() => {
     badChannelsRef.current = visibleBadChannels;
@@ -141,6 +157,7 @@ export default function WaveformViewer({
 
   useEffect(() => {
     setPendingArtifact(null);
+    setScoreMenu(null);
   }, [currentSubBlockIndex, activeView]);
 
   const channelNames = useMemo(() => {
@@ -178,14 +195,10 @@ export default function WaveformViewer({
     const annotation = layer?.annotation || {};
     if (isScoreMode) {
       if (view === "psd") {
-        return Object.entries(annotation.psd_channel_scores || {})
-          .filter(([, score]) => Number(score) >= scoreThreshold)
-          .map(([channel]) => channel);
+        return Object.keys(annotation.psd_channel_scores || {});
       }
       const wavScores = annotation.wav_channel_scores || annotation.subblock_channel_scores || {};
-      return Object.entries(wavScores?.[currentSubBlockIndex] || {})
-        .filter(([, score]) => Number(score) >= scoreThreshold)
-        .map(([channel]) => channel);
+      return Object.keys(wavScores?.[currentSubBlockIndex] || {});
     }
     if (view === "psd") return Array.isArray(annotation.psd_bad_channels) ? annotation.psd_bad_channels : [];
     const wavBadChannels = annotation.wav_bad_channels || annotation.subblock_bad_channels || {};
@@ -211,20 +224,35 @@ export default function WaveformViewer({
     };
   }, []);
 
-  const toggleChannel = (channel) => {
+  const openScoreMenu = (channel, event) => {
+    if (!channel || !setActiveChannelScores) return;
+    const sourceEvent = event?.event || event;
+    const x = Number(sourceEvent?.clientX);
+    const y = Number(sourceEvent?.clientY);
+    setScoreMenu({
+      channel,
+      x: Number.isFinite(x) ? x : window.innerWidth / 2,
+      y: Number.isFinite(y) ? y : window.innerHeight / 2,
+    });
+  };
+
+  const setChannelScore = (channel, score) => {
+    if (!setActiveChannelScores) return;
+    const nextScores = { ...(activeChannelScores || {}) };
+    if (score === 0) {
+      delete nextScores[channel];
+    } else {
+      nextScores[channel] = score;
+    }
+    setActiveChannelScores(nextScores);
+    setScoreMenu(null);
+  };
+
+  const toggleChannel = (channel, event) => {
     if (annotationReadOnly) return;
     if (!channel) return;
     if (isScoreMode) {
-      if (!setActiveChannelScores) return;
-      const currentScore = channelScore(activeChannelScores, channel);
-      const nextScore = (currentScore + 1) % 6;
-      const nextScores = { ...(activeChannelScores || {}) };
-      if (nextScore === 0) {
-        delete nextScores[channel];
-      } else {
-        nextScores[channel] = nextScore;
-      }
-      setActiveChannelScores(nextScores);
+      openScoreMenu(channel, event);
       return;
     }
     if (!setActiveBadChannels) return;
@@ -245,12 +273,12 @@ export default function WaveformViewer({
       if (!setActiveChannelScores) return;
       const uniqueChannels = [...new Set(channels)];
       const nextScores = { ...(activeChannelScores || {}) };
-      const shouldClear = uniqueChannels.every((channel) => channelScore(nextScores, channel) >= scoreThreshold);
+      const shouldClear = uniqueChannels.every((channel) => channelScore(nextScores, channel) > 0);
       uniqueChannels.forEach((channel) => {
         if (shouldClear) {
           delete nextScores[channel];
         } else {
-          nextScores[channel] = scoreThreshold;
+          nextScores[channel] = 3;
         }
       });
       setActiveChannelScores(nextScores);
@@ -589,7 +617,7 @@ export default function WaveformViewer({
       plotDiv.on("plotly_click", (event) => {
         if (event?.event?.button !== 0) return;
         scrollTopRef.current = container.scrollTop;
-        toggleChannel(event.points?.[0]?.data?.name);
+        toggleChannel(event.points?.[0]?.data?.name, event);
       });
       plotDiv.on("plotly_hover", (event) => setHoveredChannel(event.points?.[0]?.data?.name || null));
       plotDiv.on("plotly_unhover", () => setHoveredChannel(null));
@@ -601,7 +629,7 @@ export default function WaveformViewer({
     return () => {
       cancelled = true;
     };
-  }, [activeView, wavData, wavBadChannels, wavChannelScores, artifacts, pendingArtifact, scalingFactor, annotationLayers, annotationMode, scoreThreshold]);
+  }, [activeView, wavData, wavBadChannels, wavChannelScores, artifacts, pendingArtifact, scalingFactor, annotationLayers, annotationMode]);
 
   useEffect(() => {
     if (activeView !== "wav" || !activePlotRef.current || !Object.keys(wavData).length) return;
@@ -612,7 +640,7 @@ export default function WaveformViewer({
       "line.width": style.widths,
       opacity: style.opacities,
     });
-  }, [activeView, wavData, wavBadChannels, wavChannelScores, hoveredChannel, annotationLayers, annotationMode, scoreThreshold]);
+  }, [activeView, wavData, wavBadChannels, wavChannelScores, hoveredChannel, annotationLayers, annotationMode]);
 
   useEffect(() => {
     if (activeView !== "psd") return;
@@ -682,7 +710,7 @@ export default function WaveformViewer({
         toggleSelectedChannels(selectedChannels);
         Plotly.relayout(plotDiv, { selections: [] });
       });
-      plotDiv.on("plotly_click", (event) => toggleChannel(event.points?.[0]?.data?.name));
+      plotDiv.on("plotly_click", (event) => toggleChannel(event.points?.[0]?.data?.name, event));
       plotDiv.on("plotly_hover", (event) => setHoveredChannel(event.points?.[0]?.data?.name || null));
       plotDiv.on("plotly_unhover", () => setHoveredChannel(null));
     };
@@ -691,7 +719,7 @@ export default function WaveformViewer({
     return () => {
       cancelled = true;
     };
-  }, [activeView, psdFrequencies, psdSeries, annotationLayers, psdChannelScores, annotationMode, scoreThreshold]);
+  }, [activeView, psdFrequencies, psdSeries, annotationLayers, psdChannelScores, annotationMode]);
 
   useEffect(() => {
     if (activeView !== "psd" || !activePlotRef.current || !Object.keys(psdSeries).length) return;
@@ -702,13 +730,13 @@ export default function WaveformViewer({
       "line.width": style.widths,
       opacity: style.opacities,
     });
-  }, [activeView, psdSeries, psdBadChannels, psdChannelScores, hoveredChannel, annotationLayers, annotationMode, scoreThreshold]);
+  }, [activeView, psdSeries, psdBadChannels, psdChannelScores, hoveredChannel, annotationLayers, annotationMode]);
 
   const setAllChannels = () => {
     if (annotationReadOnly) return;
     if (isScoreMode) {
       if (channelNames.length && setActiveChannelScores) {
-        setActiveChannelScores(Object.fromEntries(channelNames.map((channel) => [channel, scoreThreshold])));
+        setActiveChannelScores(Object.fromEntries(channelNames.map((channel) => [channel, 3])));
       }
       return;
     }
@@ -758,6 +786,8 @@ export default function WaveformViewer({
           </button>
         </div>
       </div>
+
+      {isScoreMode && <ScoreLegend labels={labels} scoreColor={scoreColor} />}
 
       {activeView === "wav" && (
         <div style={styles.controlBar}>
@@ -867,6 +897,17 @@ export default function WaveformViewer({
           <span style={{ color: "#374151" }}>/ {totalSubBlocks}</span>
         </div>
       )}
+
+      {isScoreMode && scoreMenu && (
+        <ScoreMenu
+          menu={scoreMenu}
+          currentScore={channelScore(activeChannelScores, scoreMenu.channel)}
+          labels={labels}
+          scoreColor={scoreColor}
+          onSelect={(score) => setChannelScore(scoreMenu.channel, score)}
+          onClose={() => setScoreMenu(null)}
+        />
+      )}
     </div>
   );
 }
@@ -886,7 +927,7 @@ function ChannelList({ channels, badChannels, channelScores = {}, isScoreMode = 
             type="button"
             onMouseEnter={() => onHover(channel)}
             onMouseLeave={() => onHover(null)}
-            onClick={() => onToggle(channel)}
+            onClick={(event) => onToggle(channel, event)}
             title={users ? `${channel}${isScoreMode ? `\nScore: ${score}` : ""}\nOther users: ${users}` : `${channel}${isScoreMode ? `\nScore: ${score}` : ""}`}
             style={channelButtonStyle(isBad, isHovered, index, isScoreMode ? score : 0, scoreColor)}
           >
@@ -903,6 +944,47 @@ function ChannelList({ channels, badChannels, channelScores = {}, isScoreMode = 
           </button>
         );
       })}
+    </div>
+  );
+}
+
+function ScoreLegend({ labels, scoreColor }) {
+  return (
+    <div style={styles.scoreLegend} title={labels.scoreLegend}>
+      <span style={styles.scoreLegendTitle}>{labels.scoreLegend}</span>
+      {[0, 1, 2, 3, 4, 5].map((score) => (
+        <span key={score} style={styles.scoreLegendItem}>
+          <span style={{ ...styles.scoreSwatch, background: scoreColor(score) }} />
+          {labels.scoreLabels?.[score] || score}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function ScoreMenu({ menu, currentScore, labels, scoreColor, onSelect, onClose }) {
+  const left = Math.min(window.innerWidth - 190, Math.max(8, menu.x + 8));
+  const top = Math.min(window.innerHeight - 230, Math.max(8, menu.y + 8));
+
+  return (
+    <div style={styles.scoreMenuBackdrop} onClick={onClose}>
+      <div style={{ ...styles.scoreMenu, left, top }} onClick={(event) => event.stopPropagation()}>
+        <div style={styles.scoreMenuTitle}>{menu.channel}</div>
+        {[0, 1, 2, 3, 4, 5].map((score) => {
+          const active = score === currentScore;
+          return (
+            <button
+              key={score}
+              type="button"
+              onClick={() => onSelect(score)}
+              style={scoreMenuItemStyle(active)}
+            >
+              <span style={{ ...styles.scoreSwatch, background: scoreColor(score) }} />
+              <span>{labels.scoreLabels?.[score] || score}</span>
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -976,6 +1058,61 @@ const styles = {
     gap: 8,
     fontSize: 13,
     flexWrap: "wrap",
+  },
+  scoreLegend: {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    minHeight: 34,
+    padding: "6px 10px",
+    border: "1px solid #dbe3ef",
+    background: "#f8fafc",
+    fontSize: 12,
+    overflowX: "auto",
+    whiteSpace: "nowrap",
+  },
+  scoreLegendTitle: {
+    flex: "0 0 auto",
+    color: "#475569",
+    fontWeight: 800,
+  },
+  scoreLegendItem: {
+    flex: "0 0 auto",
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 4,
+    color: "#334155",
+  },
+  scoreSwatch: {
+    flex: "0 0 auto",
+    width: 12,
+    height: 12,
+    borderRadius: 3,
+    border: "1px solid rgba(15, 23, 42, 0.22)",
+  },
+  scoreMenuBackdrop: {
+    position: "fixed",
+    inset: 0,
+    zIndex: 5000,
+    background: "transparent",
+  },
+  scoreMenu: {
+    position: "fixed",
+    width: 176,
+    padding: 6,
+    border: "1px solid #cbd5e1",
+    borderRadius: 6,
+    background: "#ffffff",
+    boxShadow: "0 10px 30px rgba(15, 23, 42, 0.22)",
+  },
+  scoreMenuTitle: {
+    padding: "5px 7px 7px",
+    color: "#0f172a",
+    fontSize: 12,
+    fontWeight: 800,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
   },
   controlBar: {
     display: "flex",
@@ -1125,6 +1262,25 @@ function buttonStyle(background) {
     color: "#fff",
     cursor: "pointer",
     fontSize: 12,
+  };
+}
+
+function scoreMenuItemStyle(active) {
+  return {
+    width: "100%",
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    padding: "7px 8px",
+    border: "1px solid",
+    borderColor: active ? "#2563eb" : "transparent",
+    borderRadius: 4,
+    background: active ? "#eff6ff" : "#ffffff",
+    color: active ? "#1d4ed8" : "#334155",
+    cursor: "pointer",
+    fontSize: 12,
+    fontWeight: active ? 800 : 600,
+    textAlign: "left",
   };
 }
 
