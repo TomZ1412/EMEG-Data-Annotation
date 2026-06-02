@@ -29,6 +29,8 @@ class DataProfile:
     annotation_scope: str = "shared"
     annotation_mode: str = "bad_channel"
     score_annotation_file: Path | None = None
+    load_llm_preannotations: bool = False
+    llm_annotation_file: Path | None = None
 
 
 PROFILES = {
@@ -94,6 +96,7 @@ def load_profile(profile_name: str | None = None) -> DataProfile:
         "ANNO_SCORE_ANNOTATION_FILE",
         base.score_annotation_file or _default_score_annotation_file(annotation_file),
     )
+    llm_annotation_file = os.getenv("ANNO_LLM_ANNOTATION_FILE")
 
     return DataProfile(
         raw_data_root=_path_from_env("ANNO_RAW_DATA_ROOT", base.raw_data_root),
@@ -114,4 +117,6 @@ def load_profile(profile_name: str | None = None) -> DataProfile:
         annotation_scope=os.getenv("ANNO_ANNOTATION_SCOPE", base.annotation_scope).strip().lower(),
         annotation_mode=os.getenv("ANNO_ANNOTATION_MODE", base.annotation_mode).strip().lower(),
         score_annotation_file=score_annotation_file,
+        load_llm_preannotations=_bool_from_env("ANNO_LOAD_LLM_PREANNOTATIONS", base.load_llm_preannotations),
+        llm_annotation_file=Path(llm_annotation_file) if llm_annotation_file else base.llm_annotation_file,
     )

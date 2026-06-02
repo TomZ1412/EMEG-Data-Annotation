@@ -181,6 +181,28 @@ function formatScores(scores = {}) {
   return entries.length ? entries.map(([channel, score]) => `${channel}: ${score}`).join(", ") : "";
 }
 
+function diffChannelScores(current = {}, base = {}) {
+  const diff = {};
+  const channels = new Set([...Object.keys(current || {}), ...Object.keys(base || {})]);
+  channels.forEach((channel) => {
+    const currentScore = Number(current?.[channel] || 0);
+    const baseScore = Number(base?.[channel] || 0);
+    if (currentScore === baseScore) return;
+    diff[channel] = currentScore;
+  });
+  return diff;
+}
+
+function diffSubblockScores(current = {}, base = {}) {
+  const diff = {};
+  const blockIndexes = new Set([...Object.keys(current || {}), ...Object.keys(base || {})]);
+  blockIndexes.forEach((blockIndex) => {
+    const blockDiff = diffChannelScores(current?.[blockIndex] || {}, base?.[blockIndex] || {});
+    if (Object.keys(blockDiff).length) diff[blockIndex] = blockDiff;
+  });
+  return diff;
+}
+
 function decorateAnnotationLayers(layers = [], currentUser = "") {
   const orderedLayers = [...layers].sort((left, right) => {
     if (left.user === currentUser) return -1;
@@ -213,6 +235,8 @@ function App() {
   const [isDataDiscarded, setIsDataDiscarded] = useState(false);
   const [fileAnnotationCache, setFileAnnotationCache] = useState({});
   const [annotationLayers, setAnnotationLayers] = useState([]);
+  const [llmPreannotation, setLlmPreannotation] = useState(emptyAnnotation);
+  const [llmPreannotationEnabled, setLlmPreannotationEnabled] = useState(false);
   const [overlayMode, setOverlayMode] = useState("mine");
   const [selectedOverlayUser, setSelectedOverlayUser] = useState("");
   const [language, setLanguage] = useState(() => localStorage.getItem("annotation_language") || "en");
@@ -245,7 +269,7 @@ function App() {
   const visibleAnnotationLayers = useMemo(() => {
     if (overlayMode === "mine") return [];
     const otherLayers = decoratedAnnotationLayers.filter((layer) => !layer.isCurrentUser);
-    if (!selectedOverlayUser) return otherLayers;
+    if (!selectedOverlayUser) return [];
     return otherLayers.filter((layer) => layer.user === selectedOverlayUser);
   }, [decoratedAnnotationLayers, overlayMode, selectedOverlayUser]);
   const overlayLegendLayers = useMemo(
@@ -449,6 +473,13 @@ function App() {
     setWavBadChannels(annotation.wav_bad_channels || {});
     setPsdChannelScores(normalizeChannelScores(annotation.psd_channel_scores));
     setWavChannelScores(normalizeSubblockScores(annotation.wav_channel_scores || annotation.subblock_channel_scores));
+    setLlmPreannotation({
+      psd_channel_scores: normalizeChannelScores(annotation.llm_preannotation?.psd_channel_scores),
+      wav_channel_scores: normalizeSubblockScores(
+        annotation.llm_preannotation?.wav_channel_scores || annotation.llm_preannotation?.subblock_channel_scores
+      ),
+    });
+    setLlmPreannotationEnabled(Boolean(annotation.llm_preannotation_enabled));
     setArtifactSegments(normalizeArtifacts(annotation.artifacts));
     setIsDataDiscarded(Boolean(annotation.discarded));
   };
@@ -463,6 +494,8 @@ function App() {
         wav_bad_channels: res.data?.wav_bad_channels || res.data?.subblock_bad_channels || {},
         psd_channel_scores: normalizeChannelScores(res.data?.psd_channel_scores),
         wav_channel_scores: normalizeSubblockScores(res.data?.wav_channel_scores || res.data?.subblock_channel_scores),
+        llm_preannotation: res.data?.llm_preannotation || null,
+        llm_preannotation_enabled: Boolean(res.data?.llm_preannotation_enabled),
         artifacts: normalizeArtifacts(res.data?.artifacts),
         discarded: Boolean(res.data?.discarded),
       };
@@ -512,6 +545,8 @@ function App() {
     setWavBadChannels({});
     setPsdChannelScores({});
     setWavChannelScores({});
+    setLlmPreannotation(emptyAnnotation);
+    setLlmPreannotationEnabled(false);
     setArtifactSegments([]);
     setAnnotationLayers([]);
     setSelectedOverlayUser("");
@@ -559,9 +594,17 @@ function App() {
       const payload = isScoreMode
         ? {
             file_path: selectedFile,
-            psd_channel_scores: psdChannelScores,
-            wav_channel_scores: wavChannelScores,
-            subblock_channel_scores: wavChannelScores,
+            psd_channel_scores: llmPreannotationEnabled
+              ? diffChannelScores(psdChannelScores, llmPreannotation.psd_channel_scores)
+              : psdChannelScores,
+            wav_channel_scores: llmPreannotationEnabled
+              ? diffSubblockScores(wavChannelScores, llmPreannotation.wav_channel_scores)
+              : wavChannelScores,
+            subblock_channel_scores: llmPreannotationEnabled
+              ? diffSubblockScores(wavChannelScores, llmPreannotation.wav_channel_scores)
+              : wavChannelScores,
+            is_delta: llmPreannotationEnabled,
+            annotation_base: llmPreannotationEnabled ? "llm" : "",
             artifacts: artifactSegments,
             user: currentUser,
             discarded: isDataDiscarded,
@@ -763,7 +806,6 @@ function App() {
                           title={layer.user}
                           onClick={() => setSelectedOverlayUser((user) => (user === layer.user ? "" : layer.user))}
                         >
-                          <span style={{ ...styles.layerDot, background: layer.color }} />
                           {layer.user}
                         </button>
                       ))}

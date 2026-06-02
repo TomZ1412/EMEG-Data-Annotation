@@ -184,26 +184,26 @@ def _as_score(value: Any) -> int | None:
     return None
 
 
-def _as_channel_scores(value: Any) -> dict:
+def _as_channel_scores(value: Any, keep_zero: bool = False) -> dict:
     if not isinstance(value, dict):
         return {}
 
     scores = {}
     for channel, raw_score in value.items():
         score = _as_score(raw_score)
-        if score is None or score == 0:
+        if score is None or (score == 0 and not keep_zero):
             continue
         scores[str(channel)] = score
     return scores
 
 
-def _as_subblock_scores(value: Any) -> dict:
+def _as_subblock_scores(value: Any, keep_zero: bool = False) -> dict:
     if not isinstance(value, dict):
         return {}
 
     subblock_scores = {}
     for key, raw_scores in value.items():
-        scores = _as_channel_scores(raw_scores)
+        scores = _as_channel_scores(raw_scores, keep_zero)
         if scores:
             subblock_scores[str(key)] = scores
     return subblock_scores
@@ -299,12 +299,15 @@ def normalize_score_annotation(record: dict) -> dict:
     if wav_scores is None:
         wav_scores = record.get("subblock_channel_scores")
 
-    psd_channel_scores = _as_channel_scores(psd_scores)
-    wav_channel_scores = _as_subblock_scores(wav_scores)
+    keep_zero = bool(record.get("is_delta") or record.get("annotation_base"))
+    psd_channel_scores = _as_channel_scores(psd_scores, keep_zero)
+    wav_channel_scores = _as_subblock_scores(wav_scores, keep_zero)
 
     return {
         "file_path": record["file_path"],
         "annotation_type": "channel_score",
+        "is_delta": keep_zero,
+        "annotation_base": record.get("annotation_base", ""),
         "psd_channel_scores": psd_channel_scores,
         "wav_channel_scores": wav_channel_scores,
         "subblock_channel_scores": wav_channel_scores,
@@ -458,6 +461,7 @@ def list_annotation_layers_for_file(
 def list_score_annotation_layers_for_file(
     annotation_file: Path,
     file_path: str,
+    keep_zero: bool = False,
 ) -> list[dict]:
     if not annotation_file.exists():
         return []
@@ -495,7 +499,7 @@ def list_score_annotation_layers_for_file(
                 user = str(annotation.get("user") or "legacy")
                 layers_by_user[user] = {
                     "user": user,
-                    "annotation": get_score_annotation_payload(annotation),
+                    "annotation": get_score_annotation_payload(annotation, keep_zero=keep_zero),
                 }
     except OSError as exc:
         print(f"Failed to load score annotation layers {annotation_file}: {exc}")
@@ -520,12 +524,14 @@ def get_annotation_payload(annotation: dict) -> dict:
     }
 
 
-def get_score_annotation_payload(annotation: dict) -> dict:
+def get_score_annotation_payload(annotation: dict, keep_zero: bool = False) -> dict:
     psd_channel_scores = _as_channel_scores(
-        annotation.get("psd_channel_scores") or annotation.get("psd_scores")
+        annotation.get("psd_channel_scores") or annotation.get("psd_scores"),
+        keep_zero,
     )
     wav_channel_scores = _as_subblock_scores(
-        annotation.get("wav_channel_scores") or annotation.get("subblock_channel_scores")
+        annotation.get("wav_channel_scores") or annotation.get("subblock_channel_scores"),
+        keep_zero,
     )
 
     return {

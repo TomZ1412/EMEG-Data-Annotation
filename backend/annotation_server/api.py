@@ -19,6 +19,7 @@ from .storage import (
     find_annotation,
     get_annotation_for_file,
     get_score_annotation_for_file,
+    get_score_annotation_payload,
     list_data_files,
     list_annotation_layers_for_file,
     list_score_annotation_layers_for_file,
@@ -56,6 +57,84 @@ def empty_annotation_payload(settings: DataProfile) -> dict:
     return payload
 
 
+def merge_score_payloads(base: dict, delta: dict) -> dict:
+    def merge_channel_scores(base_scores: dict, delta_scores: dict) -> dict:
+        merged = dict(base_scores or {})
+        for channel, score in (delta_scores or {}).items():
+            if int(score) == 0:
+                merged.pop(channel, None)
+            else:
+                merged[channel] = int(score)
+        return merged
+
+    def merge_subblock_scores(base_scores: dict, delta_scores: dict) -> dict:
+        merged = {str(key): dict(scores) for key, scores in (base_scores or {}).items()}
+        for block_index, scores in (delta_scores or {}).items():
+            block_key = str(block_index)
+            merged_block = dict(merged.get(block_key, {}))
+            for channel, score in (scores or {}).items():
+                if int(score) == 0:
+                    merged_block.pop(channel, None)
+                else:
+                    merged_block[channel] = int(score)
+            if merged_block:
+                merged[block_key] = merged_block
+            else:
+                merged.pop(block_key, None)
+        return merged
+
+    psd_channel_scores = merge_channel_scores(
+        base.get("psd_channel_scores", {}),
+        delta.get("psd_channel_scores", {}),
+    )
+    wav_channel_scores = merge_subblock_scores(
+        base.get("wav_channel_scores", {}) or base.get("subblock_channel_scores", {}),
+        delta.get("wav_channel_scores", {}) or delta.get("subblock_channel_scores", {}),
+    )
+    return {
+        "bad_channels": [],
+        "psd_bad_channels": [],
+        "wav_bad_channels": {},
+        "subblock_bad_channels": {},
+        "psd_channel_scores": psd_channel_scores,
+        "wav_channel_scores": wav_channel_scores,
+        "subblock_channel_scores": wav_channel_scores,
+        "artifacts": delta.get("artifacts") or base.get("artifacts") or [],
+        "discarded": bool(delta.get("discarded", base.get("discarded", False))),
+        "llm_preannotation": base,
+        "user_annotation_delta": delta,
+    }
+
+
+def get_score_annotation_with_optional_llm(
+    settings: DataProfile,
+    file_path: str,
+    user: str | None,
+) -> dict:
+    annotation_user = user if settings.annotation_scope == "user" else None
+    user_record = load_annotations(
+        active_annotation_file(settings),
+        file_path,
+        user=annotation_user,
+        scope=settings.annotation_scope,
+    )
+    user_payload = get_score_annotation_payload(user_record, keep_zero=True) if user_record else empty_annotation_payload(settings)
+
+    if not settings.load_llm_preannotations or not settings.llm_annotation_file:
+        return get_score_annotation_for_file(
+            active_annotation_file(settings),
+            file_path,
+            user=annotation_user,
+            scope=settings.annotation_scope,
+        )
+
+    llm_record = load_annotations(settings.llm_annotation_file, file_path, scope="shared")
+    llm_payload = get_score_annotation_payload(llm_record) if llm_record else empty_annotation_payload(settings)
+    merged = merge_score_payloads(llm_payload, user_payload)
+    merged["llm_preannotation_enabled"] = True
+    return merged
+
+
 def create_app(profile_name: str | None = None, profile: DataProfile | None = None) -> FastAPI:
     settings = profile or load_profile(profile_name)
     locks = AnnotationLocks()
@@ -81,6 +160,8 @@ def create_app(profile_name: str | None = None, profile: DataProfile | None = No
             "active_annotation_file": str(active_annotation_file(settings)),
             "annotation_mode": active_annotation_mode(settings),
             "score_annotation_file": str(settings.score_annotation_file or ""),
+            "load_llm_preannotations": settings.load_llm_preannotations,
+            "llm_annotation_file": str(settings.llm_annotation_file or ""),
             "dataset_filters": list(settings.dataset_filters),
             "allow_open_annotated": settings.allow_open_annotated,
             "show_existing_annotations": settings.show_existing_annotations,
@@ -151,12 +232,7 @@ def create_app(profile_name: str | None = None, profile: DataProfile | None = No
             return JSONResponse(empty_annotation_payload(settings))
         annotation_user = user if settings.annotation_scope == "user" else None
         if active_annotation_mode(settings) == "channel_score":
-            return JSONResponse(get_score_annotation_for_file(
-                active_annotation_file(settings),
-                file_path,
-                user=annotation_user,
-                scope=settings.annotation_scope,
-            ))
+            return JSONResponse(get_score_annotation_with_optional_llm(settings, file_path, user))
         return JSONResponse(get_annotation_for_file(
             active_annotation_file(settings),
             file_path,
@@ -177,7 +253,18 @@ def create_app(profile_name: str | None = None, profile: DataProfile | None = No
             layers = list_score_annotation_layers_for_file(
                 active_annotation_file(settings),
                 file_path,
+                keep_zero=settings.load_llm_preannotations,
             )
+            if settings.load_llm_preannotations and settings.llm_annotation_file:
+                llm_record = load_annotations(settings.llm_annotation_file, file_path, scope="shared")
+                llm_payload = get_score_annotation_payload(llm_record) if llm_record else empty_annotation_payload(settings)
+                layers = [
+                    {
+                        **layer,
+                        "annotation": merge_score_payloads(llm_payload, layer.get("annotation", {})),
+                    }
+                    for layer in layers
+                ]
         else:
             layers = list_annotation_layers_for_file(active_annotation_file(settings), file_path)
         return JSONResponse({

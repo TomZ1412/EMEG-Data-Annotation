@@ -65,6 +65,8 @@ You can override paths without editing code:
 - `ANNO_SHOW_ANNOTATION_LAYERS`: defaults to `true`; set to `false` to hide other users' annotation overlays.
 - `ANNO_ANNOTATION_MODE`: defaults to `bad_channel`; set to `channel_score` to score every channel from 0 to 5.
 - `ANNO_SCORE_ANNOTATION_FILE`: JSONL output path for `channel_score` mode. Defaults to a sibling file named like `*_scores.jsonl`.
+- `ANNO_LOAD_LLM_PREANNOTATIONS`: defaults to `false`; set to `true` to preload LLM score annotations as a baseline.
+- `ANNO_LLM_ANNOTATION_FILE`: JSONL path for LLM preannotations. User submissions save only score changes relative to this baseline.
 
 Recommended processed-only server environment:
 
@@ -81,6 +83,8 @@ Scoring-mode example:
 ANNO_PROFILE=annotate
 ANNO_ANNOTATION_MODE=channel_score
 ANNO_SCORE_ANNOTATION_FILE=/data/anno/annotations/channel_scores.jsonl
+ANNO_LOAD_LLM_PREANNOTATIONS=true
+ANNO_LLM_ANNOTATION_FILE=/data/anno/annotations/llm_channel_scores.jsonl
 ```
 
 ## Frontend Web Deployment

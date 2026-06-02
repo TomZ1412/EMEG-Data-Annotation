@@ -2,15 +2,15 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import * as Plotly from "plotly.js-dist-min";
 
 const BAD_COLOR = "#dc2626";
-const HOVER_COLOR = "#f59e0b";
+const HOVER_COLOR = "#d946ef";
 const GOOD_COLOR = "#2563eb";
 const SCORE_COLORS = {
   0: "#2563eb",
-  1: "#22c55e",
-  2: "#eab308",
-  3: "#f97316",
-  4: "#dc2626",
-  5: "#7e22ce",
+  1: "#06b6d4",
+  2: "#22c55e",
+  3: "#eab308",
+  4: "#f97316",
+  5: "#dc2626",
 };
 const WINDOW_DURATION_SECONDS = 30;
 const CHANNEL_COLORS = [
@@ -125,6 +125,7 @@ export default function WaveformViewer({
   markedSubBlocks = [],
   language = "en",
 }) {
+  const shellRef = useRef(null);
   const waveformRef = useRef(null);
   const psdRef = useRef(null);
   const activePlotRef = useRef(null);
@@ -205,11 +206,27 @@ export default function WaveformViewer({
     return Array.isArray(wavBadChannels?.[currentSubBlockIndex]) ? wavBadChannels[currentSubBlockIndex] : [];
   };
 
+  const layerChannelScore = (layer, channel, view = activeView) => {
+    const annotation = layer?.annotation || {};
+    if (view === "psd") {
+      return channelScore(annotation.psd_channel_scores, channel);
+    }
+    const wavScores = annotation.wav_channel_scores || annotation.subblock_channel_scores || {};
+    return channelScore(wavScores?.[currentSubBlockIndex], channel);
+  };
+
   const matchingAnnotationLayers = (channel, index, view = activeView) =>
     annotationLayers.filter((layer) => isBadChannel(layerBadChannels(layer, view), channel, index));
 
-  const firstLayerColor = (channel, index, view = activeView) =>
-    matchingAnnotationLayers(channel, index, view)[0]?.color || null;
+  const firstLayerColor = (channel, index, view = activeView) => {
+    const layer = matchingAnnotationLayers(channel, index, view)[0];
+    if (!layer) return null;
+    if (isScoreMode) {
+      const score = layerChannelScore(layer, channel, view);
+      return score > 0 ? scoreColor(score) : null;
+    }
+    return layer.color || null;
+  };
 
   const layerUserText = (channel, index, view = activeView) => {
     const users = matchingAnnotationLayers(channel, index, view)
@@ -227,12 +244,19 @@ export default function WaveformViewer({
   const openScoreMenu = (channel, event) => {
     if (!channel || !setActiveChannelScores) return;
     const sourceEvent = event?.event || event;
-    const x = Number(sourceEvent?.clientX);
-    const y = Number(sourceEvent?.clientY);
+    const shellRect = shellRef.current?.getBoundingClientRect();
+    const clientX = Number(sourceEvent?.clientX);
+    const clientY = Number(sourceEvent?.clientY);
+    const width = shellRect?.width || window.innerWidth;
+    const height = shellRect?.height || window.innerHeight;
+    const x = Number.isFinite(clientX) && shellRect ? clientX - shellRect.left : width / 2;
+    const y = Number.isFinite(clientY) && shellRect ? clientY - shellRect.top : height / 2;
     setScoreMenu({
       channel,
-      x: Number.isFinite(x) ? x : window.innerWidth / 2,
-      y: Number.isFinite(y) ? y : window.innerHeight / 2,
+      x,
+      y,
+      width,
+      height,
     });
   };
 
@@ -762,7 +786,7 @@ export default function WaveformViewer({
   const autoScale = () => setScalingFactor(Number(data?.scaling_factor || 1));
 
   return (
-    <div style={styles.shell}>
+    <div ref={shellRef} style={styles.shell}>
       <div style={styles.topbar}>
         <div style={styles.tabs}>
           {[
@@ -859,6 +883,10 @@ export default function WaveformViewer({
             onToggle={toggleChannel}
             isBadChannel={isBadChannel}
             matchingAnnotationLayers={(channel, index) => matchingAnnotationLayers(channel, index, "psd")}
+            layerScoreColor={(layer, channel) => {
+              const score = layerChannelScore(layer, channel, "psd");
+              return score > 0 ? scoreColor(score) : null;
+            }}
             layerUserText={(channel, index) => layerUserText(channel, index, "psd")}
           />
         )}
@@ -912,7 +940,7 @@ export default function WaveformViewer({
   );
 }
 
-function ChannelList({ channels, badChannels, channelScores = {}, isScoreMode = false, scoreColor, hoveredChannel, onHover, onToggle, isBadChannel, matchingAnnotationLayers, layerUserText }) {
+function ChannelList({ channels, badChannels, channelScores = {}, isScoreMode = false, scoreColor, hoveredChannel, onHover, onToggle, isBadChannel, matchingAnnotationLayers, layerScoreColor, layerUserText }) {
   return (
     <div style={styles.channelList}>
       {channels.map((channel, index) => {
@@ -920,6 +948,7 @@ function ChannelList({ channels, badChannels, channelScores = {}, isScoreMode = 
         const score = Number(channelScores[channel] || 0);
         const isHovered = hoveredChannel === channel;
         const layers = matchingAnnotationLayers?.(channel, index) || [];
+        const overlayColor = layers.length ? layerScoreColor?.(layers[0], channel) : null;
         const users = layerUserText?.(channel, index) || "";
         return (
           <button
@@ -929,7 +958,7 @@ function ChannelList({ channels, badChannels, channelScores = {}, isScoreMode = 
             onMouseLeave={() => onHover(null)}
             onClick={(event) => onToggle(channel, event)}
             title={users ? `${channel}${isScoreMode ? `\nScore: ${score}` : ""}\nOther users: ${users}` : `${channel}${isScoreMode ? `\nScore: ${score}` : ""}`}
-            style={channelButtonStyle(isBad, isHovered, index, isScoreMode ? score : 0, scoreColor)}
+            style={channelButtonStyle(isBad, isHovered, index, isScoreMode ? score : 0, scoreColor, overlayColor)}
           >
             <span style={colorDotStyle(index, isBad, isHovered, isScoreMode ? score : 0, scoreColor)} />
             {channel}
@@ -937,7 +966,11 @@ function ChannelList({ channels, badChannels, channelScores = {}, isScoreMode = 
             {layers.length > 0 && (
               <span style={styles.layerDots}>
                 {layers.slice(0, 4).map((layer) => (
-                  <span key={layer.user} title={layer.user} style={{ ...styles.layerDot, background: layer.color }} />
+                  <span
+                    key={layer.user}
+                    title={layer.user}
+                    style={{ ...styles.layerDot, background: layerScoreColor?.(layer, channel) || layer.color }}
+                  />
                 ))}
               </span>
             )}
@@ -963,12 +996,14 @@ function ScoreLegend({ labels, scoreColor }) {
 }
 
 function ScoreMenu({ menu, currentScore, labels, scoreColor, onSelect, onClose }) {
-  const left = Math.min(window.innerWidth - 190, Math.max(8, menu.x + 8));
-  const top = Math.min(window.innerHeight - 230, Math.max(8, menu.y + 8));
+  const menuWidth = 176;
+  const estimatedHeight = 224;
+  const left = Math.min((menu.width || window.innerWidth) - menuWidth - 8, Math.max(8, menu.x + 8));
+  const top = Math.min((menu.height || window.innerHeight) - estimatedHeight - 8, Math.max(8, menu.y + 8));
 
   return (
     <div style={styles.scoreMenuBackdrop} onClick={onClose}>
-      <div style={{ ...styles.scoreMenu, left, top }} onClick={(event) => event.stopPropagation()}>
+      <div style={{ ...styles.scoreMenu, left, top, width: menuWidth }} onClick={(event) => event.stopPropagation()}>
         <div style={styles.scoreMenuTitle}>{menu.channel}</div>
         {[0, 1, 2, 3, 4, 5].map((score) => {
           const active = score === currentScore;
@@ -1032,6 +1067,7 @@ function LoadingOverlay({ text }) {
 
 const styles = {
   shell: {
+    position: "relative",
     height: "100%",
     minHeight: 0,
     minWidth: 0,
@@ -1091,14 +1127,13 @@ const styles = {
     border: "1px solid rgba(15, 23, 42, 0.22)",
   },
   scoreMenuBackdrop: {
-    position: "fixed",
+    position: "absolute",
     inset: 0,
     zIndex: 5000,
     background: "transparent",
   },
   scoreMenu: {
-    position: "fixed",
-    width: 176,
+    position: "absolute",
     padding: 6,
     border: "1px solid #cbd5e1",
     borderRadius: 6,
@@ -1295,9 +1330,10 @@ const iconButtonStyle = {
   lineHeight: 1,
 };
 
-function channelButtonStyle(isBad, isHovered, index, score = 0, scoreColor = () => GOOD_COLOR) {
+function channelButtonStyle(isBad, isHovered, index, score = 0, scoreColor = () => GOOD_COLOR, overlayColor = null) {
   const scored = score > 0;
   const color = scored ? scoreColor(score) : CHANNEL_COLORS[index % CHANNEL_COLORS.length] || "#111827";
+  const accentColor = scored ? color : overlayColor;
   return {
     width: "100%",
     display: "flex",
@@ -1307,9 +1343,9 @@ function channelButtonStyle(isBad, isHovered, index, score = 0, scoreColor = () 
     padding: "5px 7px",
     marginBottom: 3,
     border: "1px solid",
-    borderColor: scored ? color : isBad ? "#fecaca" : isHovered ? "#fde68a" : "#e5e7eb",
+    borderColor: accentColor || (isBad ? "#fecaca" : isHovered ? "#fde68a" : "#e5e7eb"),
     borderRadius: 4,
-    background: scored ? "#fff7ed" : isBad ? "#fef2f2" : isHovered ? "#fffbeb" : "#fff",
+    background: scored || overlayColor ? "#f8fafc" : isBad ? "#fef2f2" : isHovered ? "#fffbeb" : "#fff",
     color: scored ? color : isBad ? BAD_COLOR : CHANNEL_COLORS[index % CHANNEL_COLORS.length] || "#111827",
     cursor: "pointer",
     fontSize: 12,
