@@ -42,7 +42,6 @@ const TEXT = {
     startAnnotationError: "Failed to start annotation. Please try again later.",
     loadVisualizationError: "Failed to load visualization data. Please check whether the data file is complete.",
     setUserFirst: "Please set a username first.",
-    annotationSaved: (action) => `Annotation saved (${action})`,
     submitError: "Failed to submit annotation. Please try again.",
     allAnnotated: "All files have been annotated.",
     allAnnotatedOrBusy: "All files are annotated or currently busy.",
@@ -84,7 +83,6 @@ const TEXT = {
     startAnnotationError: "开始标注失败，请稍后重试。",
     loadVisualizationError: "加载可视化数据失败，请检查数据文件是否完整。",
     setUserFirst: "请先设置用户名。",
-    annotationSaved: (action) => `标注已保存 (${action})`,
     submitError: "提交标注失败，请重试。",
     allAnnotated: "所有文件都已标注完成。",
     allAnnotatedOrBusy: "所有文件都已标注完成或正在被其他用户标注。",
@@ -620,7 +618,7 @@ function App() {
             discarded: isDataDiscarded,
             sub_block_index: subBlockIndex,
           };
-      const response = await axios.post(apiUrl("/annotate"), payload);
+      await axios.post(apiUrl("/annotate"), payload);
       const annotation = isScoreMode
         ? {
             psd_bad_channels: [],
@@ -638,12 +636,19 @@ function App() {
           };
 
       setFileAnnotationCache((prev) => ({ ...prev, [selectedFile]: annotation }));
-      await fetchAnnotationLayers(selectedFile);
-      await endAnnotation(selectedFile);
+      setFileTree((prev) => {
+        const markAnnotated = (nodes) => nodes.map((node) => {
+          if (node.type === "file") {
+            return node.path === selectedFile
+              ? { ...node, is_annotated: true, is_active: false, active_user: null }
+              : node;
+          }
+          return { ...node, children: markAnnotated(node.children || []) };
+        });
+        return markAnnotated(prev);
+      });
       activeFileRef.current = null;
-      alert(labels.annotationSaved(response.data.action));
-      await fetchFileTree();
-      handleNextUnannotated();
+      await handleNextUnannotated();
     } catch (err) {
       console.error("Failed to submit annotation", err);
       alert(labels.submitError);

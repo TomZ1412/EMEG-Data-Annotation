@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import pickle
+import tempfile
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +16,7 @@ from .config import DataProfile
 
 PROCESSED_SUFFIXES = {".json", ".npz"}
 ARTIFACT_WINDOW_SECONDS = 30
+_ANNOTATION_WRITE_LOCK = threading.Lock()
 
 
 def read_json(path: Path, default: Any) -> Any:
@@ -326,17 +330,66 @@ def write_annotation(annotation_file: Path, record: dict) -> None:
 
     annotation = normalize_annotation(record)
 
-    annotation_file.parent.mkdir(parents=True, exist_ok=True)
-    with annotation_file.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(annotation, ensure_ascii=False) + "\n")
+    _replace_last_annotation(annotation_file, annotation)
 
 
 def write_score_annotation(annotation_file: Path, record: dict) -> None:
     annotation = normalize_score_annotation(record)
 
+    _replace_last_annotation(annotation_file, annotation)
+
+
+def _replace_last_annotation(annotation_file: Path, annotation: dict) -> None:
+    """Replace the last record for a file path, or append it when absent."""
+    with _ANNOTATION_WRITE_LOCK:
+        _replace_last_annotation_unlocked(annotation_file, annotation)
+
+
+def _replace_last_annotation_unlocked(annotation_file: Path, annotation: dict) -> None:
     annotation_file.parent.mkdir(parents=True, exist_ok=True)
-    with annotation_file.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(annotation, ensure_ascii=False) + "\n")
+    serialized = json.dumps(annotation, ensure_ascii=False) + "\n"
+
+    if not annotation_file.exists():
+        annotation_file.write_text(serialized, encoding="utf-8")
+        return
+
+    lines = annotation_file.read_text(encoding="utf-8").splitlines(keepends=True)
+    target_path = annotation["file_path"]
+    replacement_index = None
+    for index in range(len(lines) - 1, -1, -1):
+        try:
+            existing = json.loads(lines[index])
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if existing.get("file_path") == target_path:
+            replacement_index = index
+            break
+
+    if replacement_index is None:
+        if lines and not lines[-1].endswith(("\n", "\r")):
+            lines[-1] += "\n"
+        lines.append(serialized)
+    else:
+        lines[replacement_index] = serialized
+
+    temp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            newline="",
+            dir=annotation_file.parent,
+            prefix=f".{annotation_file.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            temp_path = Path(handle.name)
+            handle.writelines(lines)
+        os.chmod(temp_path, annotation_file.stat().st_mode)
+        os.replace(temp_path, annotation_file)
+    finally:
+        if temp_path is not None and temp_path.exists():
+            temp_path.unlink()
 
 
 def get_annotation_for_file(

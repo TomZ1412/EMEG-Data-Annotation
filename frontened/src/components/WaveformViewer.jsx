@@ -241,8 +241,8 @@ export default function WaveformViewer({
     };
   }, []);
 
-  const openScoreMenu = (channel, event) => {
-    if (!channel || !setActiveChannelScores) return;
+  const openScoreMenu = (channel, event, channels = null) => {
+    if ((!channel && !channels?.length) || !setActiveChannelScores) return;
     const sourceEvent = event?.event || event;
     const shellRect = shellRef.current?.getBoundingClientRect();
     const clientX = Number(sourceEvent?.clientX);
@@ -253,6 +253,10 @@ export default function WaveformViewer({
     const y = Number.isFinite(clientY) && shellRect ? clientY - shellRect.top : height / 2;
     setScoreMenu({
       channel,
+      channels,
+      title: channels?.length
+        ? `${channels.length} ${language === "zh" ? "\u4e2a\u901a\u9053" : "channels"}`
+        : channel,
       x,
       y,
       width,
@@ -268,6 +272,20 @@ export default function WaveformViewer({
     } else {
       nextScores[channel] = score;
     }
+    setActiveChannelScores(nextScores);
+    setScoreMenu(null);
+  };
+
+  const setChannelsScore = (channels, score) => {
+    if (!setActiveChannelScores) return;
+    const nextScores = { ...(activeChannelScores || {}) };
+    channels.forEach((channel) => {
+      if (score === 0) {
+        delete nextScores[channel];
+      } else {
+        nextScores[channel] = score;
+      }
+    });
     setActiveChannelScores(nextScores);
     setScoreMenu(null);
   };
@@ -290,22 +308,12 @@ export default function WaveformViewer({
     );
   };
 
-  const toggleSelectedChannels = (channels) => {
+  const toggleSelectedChannels = (channels, event) => {
     if (annotationReadOnly) return;
     if (!channels.length) return;
     if (isScoreMode) {
-      if (!setActiveChannelScores) return;
       const uniqueChannels = [...new Set(channels)];
-      const nextScores = { ...(activeChannelScores || {}) };
-      const shouldClear = uniqueChannels.every((channel) => channelScore(nextScores, channel) > 0);
-      uniqueChannels.forEach((channel) => {
-        if (shouldClear) {
-          delete nextScores[channel];
-        } else {
-          nextScores[channel] = 3;
-        }
-      });
-      setActiveChannelScores(nextScores);
+      openScoreMenu(null, event, uniqueChannels);
       return;
     }
     if (!setActiveBadChannels) return;
@@ -731,7 +739,7 @@ export default function WaveformViewer({
       plotDiv.on("plotly_selected", (eventData) => {
         const selectedChannels = channelsFromSelection(eventData);
         if (!selectedChannels.length) return;
-        toggleSelectedChannels(selectedChannels);
+        toggleSelectedChannels(selectedChannels, eventData);
         Plotly.relayout(plotDiv, { selections: [] });
       });
       plotDiv.on("plotly_click", (event) => toggleChannel(event.points?.[0]?.data?.name, event));
@@ -756,11 +764,23 @@ export default function WaveformViewer({
     });
   }, [activeView, psdSeries, psdBadChannels, psdChannelScores, hoveredChannel, annotationLayers, annotationMode]);
 
-  const setAllChannels = () => {
+  const setAllChannels = (event) => {
     if (annotationReadOnly) return;
     if (isScoreMode) {
       if (channelNames.length && setActiveChannelScores) {
-        setActiveChannelScores(Object.fromEntries(channelNames.map((channel) => [channel, 3])));
+        const shellRect = shellRef.current?.getBoundingClientRect();
+        const width = shellRect?.width || window.innerWidth;
+        const height = shellRect?.height || window.innerHeight;
+        const clientX = Number(event?.clientX);
+        const clientY = Number(event?.clientY);
+        setScoreMenu({
+          channels: channelNames,
+          title: language === "zh" ? "\u5168\u90e8\u901a\u9053" : "All channels",
+          x: Number.isFinite(clientX) && shellRect ? clientX - shellRect.left : width / 2,
+          y: Number.isFinite(clientY) && shellRect ? clientY - shellRect.top : height / 2,
+          width,
+          height,
+        });
       }
       return;
     }
@@ -929,10 +949,12 @@ export default function WaveformViewer({
       {isScoreMode && scoreMenu && (
         <ScoreMenu
           menu={scoreMenu}
-          currentScore={channelScore(activeChannelScores, scoreMenu.channel)}
+          currentScore={scoreMenu.channel ? channelScore(activeChannelScores, scoreMenu.channel) : null}
           labels={labels}
           scoreColor={scoreColor}
-          onSelect={(score) => setChannelScore(scoreMenu.channel, score)}
+          onSelect={(score) => scoreMenu.channels
+            ? setChannelsScore(scoreMenu.channels, score)
+            : setChannelScore(scoreMenu.channel, score)}
           onClose={() => setScoreMenu(null)}
         />
       )}
@@ -1004,7 +1026,7 @@ function ScoreMenu({ menu, currentScore, labels, scoreColor, onSelect, onClose }
   return (
     <div style={styles.scoreMenuBackdrop} onClick={onClose}>
       <div style={{ ...styles.scoreMenu, left, top, width: menuWidth }} onClick={(event) => event.stopPropagation()}>
-        <div style={styles.scoreMenuTitle}>{menu.channel}</div>
+        <div style={styles.scoreMenuTitle}>{menu.title || menu.channel}</div>
         {[0, 1, 2, 3, 4, 5].map((score) => {
           const active = score === currentScore;
           return (
